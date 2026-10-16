@@ -1574,7 +1574,39 @@ function renderAdminHTML() {
       max-height: 220px; overflow: auto; border: 1px solid var(--border-color); border-radius: 6px; margin-top: 10px;
     }
 
-    /* TỐI ƯU MOBILE RESPONSIVE ĐỂ KHÔNG BỊ VỠ */
+    /* GLOBAL ACTION LOADING OVERLAY */
+    .global-action-loader {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0, 0, 0, 0.45); backdrop-filter: blur(3px);
+      display: none; align-items: center; justify-content: center;
+      z-index: 10005; padding: 15px;
+    }
+    .action-loader-card {
+      background: var(--bg-card); border: 1px solid var(--border-color);
+      padding: 16px 24px; border-radius: 12px; box-shadow: var(--dropdown-shadow);
+      display: flex; align-items: center; gap: 14px; max-width: 90%;
+      animation: scalePop 0.2s ease;
+    }
+    .action-spinner {
+      width: 24px; height: 24px; border: 3px solid rgba(2, 132, 199, 0.2);
+      border-top-color: #0284c7; border-radius: 50%;
+      animation: spinLoader 0.75s linear infinite; flex-shrink: 0;
+    }
+    @keyframes spinLoader {
+      to { transform: rotate(360deg); }
+    }
+    .action-loader-text {
+      font-size: 14px; font-weight: 600; color: var(--text-main);
+    }
+
+    .tab-header-row {
+      display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;
+    }
+    .tab-header-actions {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    }
+
+    /* TỐI ƯU MOBILE RESPONSIVE ĐỂ KHÔNG BỊ VỠ & CÂN XỨNG */
     @media (max-width: 768px) {
       .sidebar { position: fixed; top: 0; left: 0; height: 100%; transform: translateX(-100%); box-shadow: 0 0 20px rgba(0,0,0,0.3); }
       .sidebar.open { transform: translateX(0); }
@@ -1582,14 +1614,21 @@ function renderAdminHTML() {
       .menu-toggle-btn { display: inline-block; }
       .brand span:last-child { display: inline-block !important; }
       
-      .topbar { padding: 10px 12px; gap: 6px; }
-      #topbarTitle { font-size: 14px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .topbar-right { gap: 6px !important; }
+      .topbar { padding: 10px 12px; gap: 8px; }
+      .topbar-left { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+      #topbarTitle { font-size: 15px; font-weight: 700; max-width: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .topbar-right { gap: 6px !important; flex-shrink: 0; }
       #themeBtn { padding: 5px 8px; font-size: 12px; }
       #themeBtnText { display: none; }
       
       .tab-content { padding: 10px 8px; }
-      .card { padding: 12px; border-radius: 10px; }
+      .card { padding: 14px 12px; border-radius: 10px; }
+      
+      /* Căn chỉnh header các Tab trên Mobile */
+      .tab-header-row { flex-direction: column; align-items: stretch !important; gap: 10px !important; }
+      .tab-header-actions { display: grid !important; grid-template-columns: 1fr 1fr; gap: 8px !important; width: 100%; }
+      .tab-header-actions .btn, .tab-header-actions a { width: 100%; justify-content: center; text-align: center; box-sizing: border-box; }
+      .tab-header-actions .btn-span-full { grid-column: span 2; }
       
       .table-container table { min-width: 820px; }
       #giftTab .table-container table { min-width: 700px; }
@@ -1597,9 +1636,40 @@ function renderAdminHTML() {
       
       .filter-bar { flex-direction: column; align-items: stretch; gap: 8px; }
       .search-input-wrap { width: 100%; min-width: 100%; }
-      .bulk-toolbar { flex-direction: column; align-items: stretch; gap: 8px; }
-      .bulk-toolbar-actions { justify-content: flex-end; }
+      .filter-select { width: 100%; }
+      
+      /* Thanh Chọn nhiều mục (Bulk Toolbar) cân đối, không lệch */
+      .bulk-toolbar { flex-direction: column; align-items: stretch; gap: 10px; padding: 10px 12px; }
+      .bulk-toolbar-info { display: flex; justify-content: space-between; align-items: center; width: 100%; font-size: 13px; }
+      .bulk-toolbar-actions { display: flex; width: 100%; gap: 8px; }
+      .bulk-toolbar-actions .btn { flex: 1; justify-content: center; text-align: center; padding: 8px 10px; font-size: 12px; min-height: 36px; }
+      
       .pagination-bar { flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+
+      /* Popup Modal tối ưu trên Mobile */
+      .modal-backdrop { padding: 8px; }
+      .modal-box { padding: 16px 14px; border-radius: 12px; max-height: 94vh; width: 100%; box-sizing: border-box; }
+      .modal-header { margin-bottom: 12px; }
+      .modal-header h3 { font-size: 16px; }
+      .modal-actions { display: flex !important; width: 100%; gap: 8px; justify-content: stretch !important; }
+      .modal-actions .btn { flex: 1; justify-content: center; text-align: center; min-height: 38px; }
+      
+      /* Chi tiết thiết bị: phân bổ nút footer 2 cột cân xứng, không bị co ép chữ */
+      #modalFooterView { display: grid !important; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; }
+      #modalFooterView #btnSendMail { grid-column: span 2; min-height: 40px; padding: 8px 12px; }
+      #modalFooterView .btn { width: 100%; min-height: 38px; justify-content: center; text-align: center; padding: 6px 10px; font-size: 13px; white-space: nowrap; }
+      #modalFooterEdit { display: flex !important; gap: 8px; width: 100%; }
+      #modalFooterEdit .btn { flex: 1; justify-content: center; min-height: 38px; }
+
+      .bulk-edit-modal-box { max-height: 95vh; border-radius: 12px; width: 100%; }
+      .bulk-edit-modal-header, .bulk-edit-modal-footer { padding: 12px 14px; }
+      .bulk-edit-modal-footer { display: flex; gap: 8px; width: 100%; }
+      .bulk-edit-modal-footer .btn { flex: 1; justify-content: center; min-height: 38px; }
+      .bulk-edit-modal-body { padding: 8px; }
+
+      .confirm-card { padding: 18px 16px; width: 100%; }
+      .confirm-actions { display: flex; width: 100%; gap: 8px; }
+      .confirm-actions .btn { flex: 1; justify-content: center; min-height: 38px; }
     }
 
     #confirmOverlay {
@@ -1669,6 +1739,14 @@ function renderAdminHTML() {
 
   <div id="toastContainer"></div>
 
+  <!-- GLOBAL ACTION LOADING OVERLAY -->
+  <div id="globalActionLoader" class="global-action-loader">
+    <div class="action-loader-card">
+      <div class="action-spinner"></div>
+      <div class="action-loader-text" id="actionLoaderText">Đang xử lý yêu cầu...</div>
+    </div>
+  </div>
+
   <div id="confirmOverlay">
     <div class="confirm-card">
       <h4 id="confirmTitle">Xác nhận</h4>
@@ -1684,7 +1762,7 @@ function renderAdminHTML() {
     <div class="topbar">
       <div class="topbar-left">
         <button class="menu-toggle-btn" onclick="toggleSidebar(true)">☰</button>
-        <div style="font-size: 17px; font-weight: bold;" id="topbarTitle">Danh sách Kích hoạt</div>
+        <div style="font-size: 17px; font-weight: bold;" id="topbarTitle">Quản lý Kích hoạt</div>
       </div>
       <div class="topbar-right" style="display: flex; align-items: center; gap: 8px;">
         <div class="theme-dropdown-container">
@@ -1714,14 +1792,14 @@ function renderAdminHTML() {
     <!-- TAB 1: DANH SÁCH -->
     <div id="listTab" class="tab-content active">
       <div class="card" style="margin-bottom: 20px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-          <div style="display: flex; align-items: center; gap: 10px;">
+        <div class="tab-header-row">
+          <div>
             <h3 style="margin: 0; font-size: 16px;">📱 Danh sách Kích hoạt</h3>
           </div>
-          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <div class="tab-header-actions">
             <button type="button" class="btn btn-green" id="btnUploadLicense" style="padding: 7px 14px; font-size: 12px;" onclick="openUploadModal('license')" title="Tải lên tệp Excel danh sách kích hoạt">📥 Upload Excel</button>
             <button type="button" class="btn btn-blue" id="btnSyncShards" style="padding: 7px 14px; font-size: 12px;" onclick="handleSyncAllPrefixes()" title="Tính toán lại Prefix và đồng bộ cache phân mảnh">🔄 Đồng bộ Shards</button>
-            <button type="button" class="btn btn-green" style="padding: 7px 14px; font-size: 12px;" onclick="openCreateLicenseModal()">+ Thêm mới</button>
+            <button type="button" class="btn btn-green btn-span-full" style="padding: 7px 14px; font-size: 12px;" onclick="openCreateLicenseModal()">+ Thêm mới</button>
           </div>
         </div>
       </div>
@@ -1794,7 +1872,7 @@ function renderAdminHTML() {
         </div>
         <div style="display: flex; gap: 8px;">
           <input type="text" id="newRomName" placeholder="Tên Sản phẩm mới..." style="flex: 1; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-body); color: var(--text-main);">
-          <button class="btn btn-blue" onclick="handleAddRom()">+ Thêm</button>
+          <button class="btn btn-blue" id="btnAddRom" onclick="handleAddRom()">+ Thêm</button>
         </div>
       </div>
 
@@ -1819,14 +1897,14 @@ function renderAdminHTML() {
     <!-- TAB 4: QUẢN LÝ GIFT CODE -->
     <div id="giftTab" class="tab-content">
       <div class="card" style="margin-bottom: 20px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-          <div style="display: flex; align-items: center; gap: 10px;">
-            <h3 style="margin: 0; font-size: 16px;">🎁 Danh sách Gift Code</h3>
-            <a id="giftShardBadgeLink" href="/json/giftcode.json" target="_blank" title="Mở file JSON trên GitHub Repo" style="text-decoration:none;">
-              <span class="badge badge-shard">🚀 json/giftcode.json</span>
-            </a>
-          </div>
+        <div class="tab-header-row">
           <div>
+            <h3 style="margin: 0; font-size: 16px;">🎁 Danh sách Gift Code</h3>
+          </div>
+          <div class="tab-header-actions">
+            <a id="giftShardBadgeLink" href="/json/giftcode.json" target="_blank" title="Mở file JSON RAW trên GitHub Repo" style="text-decoration:none;">
+              <span class="badge badge-shard" style="padding: 7px 14px; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; cursor: pointer; width: 100%;">🚀 json/giftcode.json</span>
+            </a>
             <button class="btn btn-green" style="padding: 7px 14px; font-size: 12px;" onclick="openCreateGiftModal()">+ Tạo Gift Code</button>
           </div>
         </div>
@@ -1914,7 +1992,7 @@ function renderAdminHTML() {
       </div>
       <div class="bulk-edit-modal-footer">
         <button type="button" class="btn btn-gray" onclick="closeBulkEditLicenseModal()">Hủy</button>
-        <button type="button" class="btn btn-green" id="btnSaveBulkLicenses" onclick="saveBulkEditLicenses()">🔄 Đồng bộ Tất cả</button>
+        <button type="button" class="btn btn-green" id="btnSaveBulkLicenses" onclick="saveBulkEditLicenses()">Lưu</button>
       </div>
     </div>
   </div>
@@ -1944,7 +2022,7 @@ function renderAdminHTML() {
       </div>
       <div class="bulk-edit-modal-footer">
         <button type="button" class="btn btn-gray" onclick="closeBulkEditGiftModal()">Hủy</button>
-        <button type="button" class="btn btn-green" id="btnSaveBulkGifts" onclick="saveBulkEditGifts()">🔄 Đồng bộ Tất cả</button>
+        <button type="button" class="btn btn-green" id="btnSaveBulkGifts" onclick="saveBulkEditGifts()">Lưu</button>
       </div>
     </div>
   </div>
@@ -2126,12 +2204,12 @@ function renderAdminHTML() {
 
       <div class="modal-footer" id="modalFooterView">
         <button type="button" class="btn btn-blue" id="btnSendMail" onclick="handleResendMailFromModal(this)">Gửi Email kích hoạt</button>
-        <button type="button" class="btn btn-red" onclick="handleDeleteFromModal()">Xóa</button>
-        <button type="button" class="btn btn-blue" onclick="toggleEditMode(true)">Chỉnh sửa</button>
+        <button type="button" class="btn btn-blue" id="btnEditKey" onclick="toggleEditMode(true)">Chỉnh sửa</button>
+        <button type="button" class="btn btn-red" id="btnDeleteKey" onclick="handleDeleteFromModal()">Xóa</button>
         <button type="button" class="btn btn-gray" onclick="closeModal()">Đóng</button>
       </div>
       <div class="modal-footer" id="modalFooterEdit" style="display: none;">
-        <button type="button" class="btn btn-green" onclick="handleSaveEdit()">Lưu</button>
+        <button type="button" class="btn btn-green" id="btnSaveEdit" onclick="handleSaveEdit()">Lưu</button>
         <button type="button" class="btn btn-gray" onclick="toggleEditMode(false)">Hủy</button>
       </div>
     </div>
@@ -2160,6 +2238,18 @@ function renderAdminHTML() {
 
     let currentUploadType = "license";
     let parsedImportData = [];
+
+    function showActionLoader(text) {
+      const loader = document.getElementById("globalActionLoader");
+      const textEl = document.getElementById("actionLoaderText");
+      if (textEl && text) textEl.innerText = text;
+      if (loader) loader.style.display = "flex";
+    }
+
+    function hideActionLoader() {
+      const loader = document.getElementById("globalActionLoader");
+      if (loader) loader.style.display = "none";
+    }
 
     function showToast(message, type = "info", duration = 4000) {
       const container = document.getElementById("toastContainer");
@@ -2812,23 +2902,23 @@ function renderAdminHTML() {
 
     async function handleBulkDeleteLicenses() {
       if (selectedLicenseIds.size === 0) return;
+      const count = selectedLicenseIds.size;
       const confirmed = await showConfirm(
         "Xác nhận xóa hàng loạt",
-        "Bạn có chắc chắn muốn xóa vĩnh viễn " + selectedLicenseIds.size + " bản ghi đã chọn? Các file shard tương ứng sẽ được cập nhật lại.",
+        "Bạn có chắc chắn muốn xóa vĩnh viễn " + count + " bản ghi đã chọn? Các file shard tương ứng sẽ được cập nhật lại.",
         true
       );
       if (!confirmed) return;
-      showToast("Đang xóa " + selectedLicenseIds.size + " mục...", "info");
       const res = await sendAdminAction({
         action: "bulk_delete_licenses",
         ids: Array.from(selectedLicenseIds)
-      });
+      }, "Đang xóa " + count + " mục & cập nhật Shards...");
       if (res && res.success) {
         selectedLicenseIds.clear();
         await loadAllData();
         showToast(res.message || "Đã xóa thành công!", "success", 6000);
       } else {
-        showToast("Lỗi xóa hàng loạt: " + (res.error || "Không rõ"), "error", 6000);
+        showToast("Lỗi xóa hàng loạt: " + ((res && res.error) || "Không rõ"), "error", 6000);
       }
     }
 
@@ -2944,23 +3034,23 @@ function renderAdminHTML() {
 
     async function handleBulkDeleteGifts() {
       if (selectedGiftIds.size === 0) return;
+      const count = selectedGiftIds.size;
       const confirmed = await showConfirm(
         "Xác nhận xóa Gift Code",
-        "Bạn có chắc chắn muốn xóa " + selectedGiftIds.size + " mã Gift Code đã chọn?",
+        "Bạn có chắc chắn muốn xóa " + count + " mã Gift Code đã chọn?",
         true
       );
       if (!confirmed) return;
-      showToast("Đang xóa " + selectedGiftIds.size + " Gift Code...", "info");
       const res = await sendAdminAction({
         action: "bulk_delete_gift_keys",
         ids: Array.from(selectedGiftIds)
-      });
+      }, "Đang xóa " + count + " Gift Code...");
       if (res && res.success) {
         selectedGiftIds.clear();
         await loadAllData();
         showToast(res.message || "Đã xóa Gift Code thành công!", "success", 6000);
       } else {
-        showToast("Lỗi xóa: " + (res.error || "Không rõ"), "error", 6000);
+        showToast("Lỗi xóa: " + ((res && res.error) || "Không rõ"), "error", 6000);
       }
     }
 
@@ -3348,15 +3438,32 @@ function renderAdminHTML() {
       if (!start_date || !expiration_date) return showToast("Vui lòng chọn ngày bắt đầu và kết thúc!", "warn");
       if (start_date > expiration_date) return showToast("Ngày bắt đầu không được lớn hơn ngày hết hạn!", "warn");
 
-      const action = id ? "update_gift_key" : "create_gift_key";
-      showToast("Đang lưu Gift Code...", "info");
-      const res = await sendAdminAction({ action, id: id ? Number(id) : undefined, gift_code, start_date, expiration_date, note });
-      if (res && res.success) {
-        closeGiftModal();
-        await loadAllData();
-        showToast(res.message || "Đã lưu Gift Code thành công!", "success", 6000);
-      } else {
-        showToast("Lỗi lưu Gift Code: " + (res.error || "Không rõ"), "error", 6000);
+      const saveBtn = document.getElementById("btnSaveGift");
+      const origText = saveBtn ? saveBtn.innerHTML : "Lưu";
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = "⏳ Đang lưu...";
+      }
+
+      try {
+        const action = id ? "update_gift_key" : "create_gift_key";
+        const loadingMsg = id ? "Đang cập nhật Gift Code..." : "Đang tạo Gift Code & đồng bộ file JSON...";
+        const res = await sendAdminAction(
+          { action, id: id ? Number(id) : undefined, gift_code, start_date, expiration_date, note },
+          loadingMsg
+        );
+        if (res && res.success) {
+          closeGiftModal();
+          await loadAllData();
+          showToast(res.message || "Đã lưu Gift Code thành công!", "success", 6000);
+        } else {
+          showToast("Lỗi lưu Gift Code: " + (res.error || "Không rõ"), "error", 6000);
+        }
+      } finally {
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.innerHTML = origText;
+        }
       }
     }
 
@@ -3367,8 +3474,7 @@ function renderAdminHTML() {
         true
       );
       if (!confirmed) return;
-      showToast("Đang xóa Gift Code...", "info");
-      const res = await sendAdminAction({ action: "delete_gift_key", id: Number(id) });
+      const res = await sendAdminAction({ action: "delete_gift_key", id: Number(id) }, "Đang xóa Gift Code...");
       if (res && res.success) {
         await loadAllData();
         showToast(res.message || "Đã xóa Gift Code thành công!", "success", 6000);
@@ -3378,8 +3484,7 @@ function renderAdminHTML() {
     }
 
     async function handleSyncGiftCode() {
-      showToast("Đang đồng bộ giftcode.json lên GitHub...", "info");
-      const res = await sendAdminAction({ action: "sync_gift_code" });
+      const res = await sendAdminAction({ action: "sync_gift_code" }, "Đang đồng bộ giftcode.json lên GitHub...");
       if (res && res.success) {
         showToast(res.message || "Đã đồng bộ giftcode.json thành công!", "success", 8000);
       } else {
@@ -3439,25 +3544,39 @@ function renderAdminHTML() {
     }
 
     async function handleSaveEdit() {
-      const payload = {
-        action: "update_license",
-        id: parseInt(document.getElementById("editId").value),
-        serial: document.getElementById("editSerial").value.trim(),
-        rom_version: document.getElementById("editRomSelect").value,
-        key_status: document.getElementById("editStatus").value,
-        email_phone: document.getElementById("editEmail").value.trim(),
-        country: document.getElementById("editCountry").value,
-        note: document.getElementById("editNote").value.trim()
-      };
-
-      const res = await sendAdminAction(payload);
-      if (!res.success) {
-        return showToast(res.error || "Không thể lưu thay đổi!", "error");
+      const saveBtn = document.getElementById("btnSaveEdit");
+      const origText = saveBtn ? saveBtn.innerHTML : "Lưu";
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = "⏳ Đang lưu...";
       }
 
-      closeModal();
-      await loadAllData();
-      showToast("Đã lưu cập nhật thành công!", "success");
+      try {
+        const payload = {
+          action: "update_license",
+          id: parseInt(document.getElementById("editId").value),
+          serial: document.getElementById("editSerial").value.trim(),
+          rom_version: document.getElementById("editRomSelect").value,
+          key_status: document.getElementById("editStatus").value,
+          email_phone: document.getElementById("editEmail").value.trim(),
+          country: document.getElementById("editCountry").value,
+          note: document.getElementById("editNote").value.trim()
+        };
+
+        const res = await sendAdminAction(payload, "Đang lưu thay đổi & đồng bộ Shard...");
+        if (!res || !res.success) {
+          return showToast((res && res.error) || "Không thể lưu thay đổi!", "error");
+        }
+
+        closeModal();
+        await loadAllData();
+        showToast("Đã lưu cập nhật thành công!", "success");
+      } finally {
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.innerHTML = origText;
+        }
+      }
     }
 
     async function handleDeleteFromModal() {
@@ -3468,10 +3587,14 @@ function renderAdminHTML() {
         true
       );
       if (confirmed) {
-        await sendAdminAction({ action: "delete_license", id: currentSelectedItem.id });
-        closeModal();
-        await loadAllData();
-        showToast("Đã xóa thiết bị thành công!", "success");
+        const res = await sendAdminAction({ action: "delete_license", id: currentSelectedItem.id }, "Đang xóa thiết bị & cập nhật Shard...");
+        if (res && res.success) {
+          closeModal();
+          await loadAllData();
+          showToast("Đã xóa thiết bị thành công!", "success");
+        } else {
+          showToast("Lỗi xóa: " + ((res && res.error) || "Không thể xóa"), "error");
+        }
       }
     }
 
@@ -3491,26 +3614,40 @@ function renderAdminHTML() {
       const rom_version = document.getElementById("addRomSelect").value;
       if (!serial) return showToast("Vui lòng nhập Serial!", "warn");
 
-      const res = await sendAdminAction({
-        action: "create_license",
-        serial,
-        rom_version,
-        key_status: document.getElementById("addStatus").value,
-        email_phone: document.getElementById("addEmail").value.trim(),
-        country: document.getElementById("addCountry").value,
-        note: document.getElementById("addNote").value.trim()
-      });
-
-      if (!res.success) {
-        return showToast(res.error || "Không thể tạo bản ghi!", "error");
+      const saveBtn = document.getElementById("btnSaveNewLicense");
+      const origText = saveBtn ? saveBtn.innerHTML : "+ Thêm Kích hoạt";
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = "⏳ Đang tạo...";
       }
 
-      closeCreateLicenseModal();
-      document.getElementById("addSerial").value = "";
-      document.getElementById("addEmail").value = "";
-      document.getElementById("addNote").value = "";
-      showToast(res.message || ("Đã thêm thiết bị mới thành công (Shard: json/" + res.prefix + ".json)!"), "success", 6000);
-      await loadAllData();
+      try {
+        const res = await sendAdminAction({
+          action: "create_license",
+          serial,
+          rom_version,
+          key_status: document.getElementById("addStatus").value,
+          email_phone: document.getElementById("addEmail").value.trim(),
+          country: document.getElementById("addCountry").value,
+          note: document.getElementById("addNote").value.trim()
+        }, "Đang tạo thiết bị & đồng bộ Shard...");
+
+        if (!res || !res.success) {
+          return showToast((res && res.error) || "Không thể tạo bản ghi!", "error");
+        }
+
+        closeCreateLicenseModal();
+        document.getElementById("addSerial").value = "";
+        document.getElementById("addEmail").value = "";
+        document.getElementById("addNote").value = "";
+        showToast(res.message || ("Đã thêm thiết bị mới thành công (Shard: json/" + res.prefix + ".json)!"), "success", 6000);
+        await loadAllData();
+      } finally {
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.innerHTML = origText;
+        }
+      }
     }
 
     async function handleSyncAllPrefixes() {
@@ -3520,23 +3657,52 @@ function renderAdminHTML() {
         false
       );
       if (!confirmed) return;
-      showToast("Đang đồng bộ dữ liệu Shards lên GitHub...", "info");
-      const res = await sendAdminAction({ action: "reindex_all_prefixes" });
-      if (res && res.success) {
-        showToast(res.message || "Đã đồng bộ thành công!", "success", 8000);
-        await loadAllData();
-      } else {
-        showToast("Lỗi đồng bộ: " + (res.error || "Không rõ"), "error", 8000);
+      const btn = document.getElementById("btnSyncShards");
+      const origText = btn ? btn.innerHTML : "🔄 Đồng bộ Shards";
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = "🔄 Đang đồng bộ...";
+      }
+      try {
+        const res = await sendAdminAction({ action: "reindex_all_prefixes" }, "Đang tính toán lại Prefix & đồng bộ tất cả Shards...");
+        if (res && res.success) {
+          showToast(res.message || "Đã đồng bộ thành công!", "success", 8000);
+          await loadAllData();
+        } else {
+          showToast("Lỗi đồng bộ: " + ((res && res.error) || "Không rõ"), "error", 8000);
+        }
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = origText;
+        }
       }
     }
 
     async function handleAddRom() {
       const name = document.getElementById("newRomName").value.trim();
       if (!name) return showToast("Vui lòng nhập tên Sản phẩm!", "warn");
-      await sendAdminAction({ action: "add_rom", name });
-      document.getElementById("newRomName").value = "";
-      await loadAllData();
-      showToast('Đã thêm Sản phẩm "' + name + '"', "success");
+      const btn = document.getElementById("btnAddRom");
+      const origText = btn ? btn.innerHTML : "+ Thêm";
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = "⏳ Đang thêm...";
+      }
+      try {
+        const res = await sendAdminAction({ action: "add_rom", name }, "Đang thêm Sản phẩm mới...");
+        if (res && res.success !== false) {
+          document.getElementById("newRomName").value = "";
+          await loadAllData();
+          showToast('Đã thêm Sản phẩm "' + name + '"', "success");
+        } else {
+          showToast("Lỗi: " + ((res && res.error) || "Không thể thêm"), "error");
+        }
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = origText;
+        }
+      }
     }
 
     async function handleDeleteRom(name) {
@@ -3546,19 +3712,30 @@ function renderAdminHTML() {
         true
       );
       if (confirmed) {
-        await sendAdminAction({ action: "delete_rom", name });
-        await loadAllData();
-        showToast('Đã xóa "' + name + '"', "success");
+        const res = await sendAdminAction({ action: "delete_rom", name }, "Đang xóa Sản phẩm...");
+        if (res && res.success !== false) {
+          await loadAllData();
+          showToast('Đã xóa "' + name + '"', "success");
+        } else {
+          showToast("Lỗi: " + ((res && res.error) || "Không thể xóa"), "error");
+        }
       }
     }
 
-    async function sendAdminAction(payload) {
-      const res = await fetch("/api/admin/action", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + currentAuthToken },
-        body: JSON.stringify(payload)
-      });
-      return await res.json();
+    async function sendAdminAction(payload, customLoadingText) {
+      showActionLoader(customLoadingText || "Đang xử lý yêu cầu...");
+      try {
+        const res = await fetch("/api/admin/action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + currentAuthToken },
+          body: JSON.stringify(payload)
+        });
+        return await res.json();
+      } catch (err) {
+        return { success: false, error: err.message };
+      } finally {
+        hideActionLoader();
+      }
     }
 
     async function handleResendMailFromModal(btn) {
