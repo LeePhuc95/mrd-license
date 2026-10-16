@@ -149,19 +149,34 @@ export default {
     // =========================================================================
     // 3. API ADMIN
     // =========================================================================
+    const adminPassword = env.ADMIN_PASSWORD;
     const authHeader = request.headers.get("Authorization");
-    const isAuthed = authHeader === `Bearer ${env.ADMIN_PASSWORD}`;
+    const isAuthed = authHeader === `Bearer ${adminPassword}`;
 
     if (url.pathname === "/api/admin/login" && request.method === "POST") {
-      const { password } = await request.json();
-      if (password === env.ADMIN_PASSWORD) {
-        return jsonResponse({ success: true });
+      try {
+        const { password } = await request.json();
+        if (password === adminPassword) {
+          return jsonResponse({ success: true });
+        }
+        return jsonResponse({ success: false, message: "Mật khẩu không chính xác!" }, 401);
+      } catch (e) {
+        return jsonResponse({ success: false, message: "Dữ liệu không hợp lệ: " + e.message }, 400);
       }
-      return jsonResponse({ success: false, message: "Mật khẩu không chính xác!" }, 401);
     }
 
     if (url.pathname === "/api/admin/init-data" && request.method === "GET") {
       if (!isAuthed) return jsonResponse({ error: "Unauthorized" }, 401);
+
+      if (!env.DB) {
+        return jsonResponse({
+          error: "Chưa liên kết CSDL D1 (tên biến 'DB') trong Settings -> Functions -> D1 database bindings của Cloudflare Pages!",
+          licenses: [],
+          rom_categories: [],
+          pages_domain: env.PAGES_DOMAIN ? env.PAGES_DOMAIN.replace(/\/+$/, '') : '',
+          license_quota: { limit: 50000, used: 0, remaining: 50000 }
+        });
+      }
 
       await ensureDbSchema(env);
       const MAX_LICENSE_REQ = 50000; // Trần 50.000 req dành riêng cho License
@@ -1187,6 +1202,7 @@ function renderAdminHTML() {
     async function verifyLogin() {
       const pwd = document.getElementById("authPasswordInput").value.trim();
       const errEl = document.getElementById("authError");
+      const btn = document.querySelector("#authOverlay button");
       errEl.style.display = "none";
 
       if (!pwd) {
@@ -1195,19 +1211,37 @@ function renderAdminHTML() {
         return;
       }
 
-      const res = await fetch("/api/admin/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: pwd })
-      });
+      if (btn) {
+        btn.disabled = true;
+        btn.innerText = "⏳ Đang kiểm tra...";
+      }
 
-      if (res.ok) {
-        currentAuthToken = pwd;
-        document.getElementById("authOverlay").style.display = "none";
-        await loadAllData();
-      } else {
-        errEl.innerText = "Mật khẩu không chính xác!";
+      try {
+        const res = await fetch("/api/admin/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: pwd })
+        });
+
+        let data = {};
+        try { data = await res.json(); } catch(e) {}
+
+        if (res.ok) {
+          currentAuthToken = pwd;
+          document.getElementById("authOverlay").style.display = "none";
+          await loadAllData();
+        } else {
+          errEl.innerText = data.message || "Mật khẩu không chính xác!";
+          errEl.style.display = "block";
+        }
+      } catch (err) {
+        errEl.innerText = "Lỗi kết nối máy chủ: " + err.message;
         errEl.style.display = "block";
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerText = "Đăng nhập";
+        }
       }
     }
 
@@ -1219,15 +1253,19 @@ function renderAdminHTML() {
     }
 
     async function loadAllData() {
-      const res = await fetch("/api/admin/init-data", {
-        headers: { "Authorization": "Bearer " + currentAuthToken }
-      });
-      if (res.status === 401) return logout();
+      try {
+        const res = await fetch("/api/admin/init-data", {
+          headers: { "Authorization": "Bearer " + currentAuthToken }
+        });
+        if (res.status === 401) return logout();
 
-      systemData = await res.json();
-      renderLicenseTable();
-      renderRomDropdowns();
-      renderRomTable();
+        systemData = await res.json();
+        if (systemData.error) {
+          showToast(systemData.error, "warn");
+        }
+        renderLicenseTable();
+        renderRomDropdowns();
+        renderRomTable();
 
       // CẬP NHẬT WIDGET ĐẾM REQUEST LICENSE
       if (systemData.license_quota) {
@@ -1250,6 +1288,8 @@ function renderAdminHTML() {
         } else {
           bar.style.background = "#38bdf8";
         }
+      } catch (err) {
+        showToast("Lỗi tải dữ liệu: " + err.message, "error");
       }
     }
 
