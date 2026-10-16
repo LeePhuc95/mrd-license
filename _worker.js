@@ -238,9 +238,15 @@ export default {
         await cache.delete(new Request(`${url.origin}/${prefix}.json`, { method: "GET" }));
 
         // Tự động đẩy file phân mảnh lên GitHub Repo cho Cloudflare Pages
-        ctx.waitUntil(syncShardToGitHub(env, prefix));
+        const gitRes = await syncShardToGitHub(env, prefix);
+        let msg = "Đã thêm thành công!";
+        if (gitRes && gitRes.success) {
+          msg += ` (Đã lưu ${prefix}.json lên GitHub)`;
+        } else if (gitRes && !gitRes.success) {
+          msg += ` (Lưu ý GitHub: ${gitRes.error})`;
+        }
 
-        return jsonResponse({ success: true, message: "Đã thêm thành công!", prefix });
+        return jsonResponse({ success: true, message: msg, prefix });
       }
       else if (action === "update_license") {
         const { stt, serial, rom_version, key_status, email_phone, country, note } = body;
@@ -269,18 +275,22 @@ export default {
         await cache.delete(cacheKey);
 
         // Xóa CDN cache phân mảnh cũ và mới & đồng bộ lên GitHub
+        let gitNotice = "";
         if (oldPrefix) {
           await cache.delete(new Request(`${url.origin}/${oldPrefix}.json`, { method: "GET" }));
           if (oldPrefix !== newPrefix) {
-            ctx.waitUntil(syncShardToGitHub(env, oldPrefix));
+            await syncShardToGitHub(env, oldPrefix);
           }
         }
         if (newPrefix) {
           await cache.delete(new Request(`${url.origin}/${newPrefix}.json`, { method: "GET" }));
-          ctx.waitUntil(syncShardToGitHub(env, newPrefix));
+          const gitRes = await syncShardToGitHub(env, newPrefix);
+          if (gitRes && !gitRes.success) {
+            gitNotice = ` (Lưu ý GitHub: ${gitRes.error})`;
+          }
         }
 
-        return jsonResponse({ success: true, prefix: newPrefix });
+        return jsonResponse({ success: true, message: `Đã cập nhật thành công!${gitNotice}`, prefix: newPrefix });
       }
       else if (action === "delete_license") {
         const oldItem = await env.DB.prepare("SELECT serial, prefix FROM licenses WHERE stt = ?").bind(body.stt).first();
@@ -289,11 +299,15 @@ export default {
         await env.DB.prepare("DELETE FROM licenses WHERE stt = ?").bind(body.stt).run();
         await cache.delete(cacheKey);
 
+        let gitNotice = "";
         if (prefix) {
           await cache.delete(new Request(`${url.origin}/${prefix}.json`, { method: "GET" }));
-          ctx.waitUntil(syncShardToGitHub(env, prefix));
+          const gitRes = await syncShardToGitHub(env, prefix);
+          if (gitRes && !gitRes.success) {
+            gitNotice = ` (Lưu ý GitHub: ${gitRes.error})`;
+          }
         }
-        return jsonResponse({ success: true });
+        return jsonResponse({ success: true, message: `Đã xóa bản quyền thành công!${gitNotice}` });
       }
       else if (action === "reindex_all_prefixes") {
         await ensureDbSchema(env);
@@ -304,16 +318,23 @@ export default {
           const p = getDevicePrefix(row.serial);
           await env.DB.prepare("UPDATE licenses SET prefix = ? WHERE stt = ?").bind(p, row.stt).run();
           count++;
-          if (!purgedPrefixes.has(p)) {
-            purgedPrefixes.add(p);
-            await cache.delete(new Request(`${url.origin}/${p}.json`, { method: "GET" }));
+          purgedPrefixes.add(p);
+          await cache.delete(new Request(`${url.origin}/${p}.json`, { method: "GET" }));
+        }
+
+        // Đẩy tất cả các shard phân mảnh lên GitHub Repo cho Pages và thu thập kết quả
+        const syncMsgs = [];
+        for (const p of purgedPrefixes) {
+          const res = await syncShardToGitHub(env, p);
+          if (res && res.success) {
+            syncMsgs.push(`${p}.json: ✅ Thành công`);
+          } else {
+            syncMsgs.push(`${p}.json: ❌ ${res ? res.error : 'Lỗi không xác định'}`);
           }
         }
-        // Đẩy tất cả các shard phân mảnh lên GitHub Repo cho Pages
-        for (const p of purgedPrefixes) {
-          ctx.waitUntil(syncShardToGitHub(env, p));
-        }
-        return jsonResponse({ success: true, count, message: `Đã đồng bộ lại prefix cho ${count} bản ghi và đẩy ${purgedPrefixes.size} file shard lên GitHub!` });
+
+        const gitStatus = syncMsgs.length > 0 ? " | GitHub: " + syncMsgs.join("; ") : "";
+        return jsonResponse({ success: true, count, message: `Đã đồng bộ ${count} bản ghi D1.${gitStatus}` });
       }
       else if (action === "add_rom") {
         const { name } = body;
@@ -400,7 +421,21 @@ async function ensureDbSchema(env) {
  * Tự động đồng bộ file {prefix}.json lên GitHub Repo đã liên kết với Cloudflare Pages
  */
 async function syncShardToGitHub(env, prefix) {
-  if (!env?.GITHUB_TOKEN || !env?.GITHUB_REPO || !prefix) return;
+  if (!prefix) return { success: false, error: "Thiếu prefix" };
+
+  const token = env?.GITHUB_TOKEN ? String(env.GITHUB_TOKEN).trim() : null;
+  const rawRepo = env?.GITHUB_REPO ? String(env.GITHUB_REPO).trim() : null;
+
+  if (!token) {
+    return { success: false, error: "Chưa cấu hình biến GITHUB_TOKEN trong Settings -> Environment variables của Pages" };
+  }
+  if (!rawRepo) {
+    return { success: false, error: "Chưa cấu hình biến GITHUB_REPO trong Settings -> Environment variables của Pages" };
+  }
+
+  const cleanRepo = rawRepo
+    .replace(/^https?:\/\/github\.com\//i, "")
+    .replace(/^\/+|\/+$/g, "");
 
   try {
     const { results } = await env.DB.prepare(
@@ -425,11 +460,11 @@ async function syncShardToGitHub(env, prefix) {
     const contentBase64 = btoa(binary);
 
     const filePath = `${prefix}.json`;
-    const apiUrl = `https://api.github.com/repos/${env.GITHUB_REPO}/contents/${filePath}`;
+    const apiUrl = `https://api.github.com/repos/${cleanRepo}/contents/${filePath}`;
     const headers = {
-      "Authorization": `Bearer ${env.GITHUB_TOKEN}`,
-      "Accept": "application/vnd.github.v3+json",
-      "User-Agent": "MRD-Cloudflare-Worker"
+      "Authorization": `Bearer ${token}`,
+      "Accept": "application/vnd.github+json",
+      "User-Agent": "MRD-Cloudflare-Pages"
     };
 
     // Kiểm tra file đã có trên GitHub chưa để lấy SHA (bắt buộc khi cập nhật file)
@@ -463,10 +498,19 @@ async function syncShardToGitHub(env, prefix) {
 
     if (!putRes.ok) {
       const errText = await putRes.text();
-      console.error(`Lỗi đẩy file ${filePath} lên GitHub:`, errText);
+      let errMsg = errText;
+      try {
+        const errJson = JSON.parse(errText);
+        if (errJson.message) errMsg = errJson.message;
+      } catch (_) {}
+      console.error(`Lỗi đẩy file ${filePath} lên GitHub:`, errMsg);
+      return { success: false, error: `GitHub API HTTP ${putRes.status}: ${errMsg}` };
     }
+
+    return { success: true };
   } catch (err) {
     console.error(`Lỗi ngoại lệ syncShardToGitHub (${prefix}):`, err.message);
+    return { success: false, error: err.message };
   }
 }
 
@@ -1108,7 +1152,7 @@ function renderAdminHTML() {
     let systemData = { licenses: [], rom_categories: [] };
     let currentSelectedItem = null;
 
-    function showToast(message, type = "info") {
+    function showToast(message, type = "info", duration = 4000) {
       const container = document.getElementById("toastContainer");
       const toast = document.createElement("div");
       toast.className = "toast-msg toast-" + type;
@@ -1118,7 +1162,7 @@ function renderAdminHTML() {
       toast.innerHTML = "<span>" + iconChar + "</span><div style='flex:1;'>" + message + "</div>";
       container.appendChild(toast);
 
-      setTimeout(() => { toast.remove(); }, 4000);
+      setTimeout(() => { toast.remove(); }, duration);
     }
 
     function showConfirm(title, message, isDanger = false) {
@@ -1450,7 +1494,7 @@ function renderAdminHTML() {
       document.getElementById("addSerial").value = "";
       document.getElementById("addEmail").value = "";
       document.getElementById("addNote").value = "";
-      showToast("Đã thêm thiết bị mới thành công (Shard: " + res.prefix + ".json)!", "success");
+      showToast(res.message || ("Đã thêm thiết bị mới thành công (Shard: " + res.prefix + ".json)!"), "success", 6000);
       await loadAllData();
       switchTab('listTab', document.querySelectorAll('.nav-item')[0]);
     }
@@ -1458,17 +1502,17 @@ function renderAdminHTML() {
     async function handleSyncAllPrefixes() {
       const confirmed = await showConfirm(
         "Đồng bộ Shards tĩnh",
-        "Hệ thống sẽ tính toán lại tiền tố (Prefix) cho toàn bộ license trong CSDL D1 và làm mới Edge Cache. Bạn có muốn tiếp tục?",
+        "Hệ thống sẽ tính toán lại tiền tố (Prefix) cho toàn bộ license trong CSDL D1 và đồng bộ lên GitHub Repo. Bạn có muốn tiếp tục?",
         false
       );
       if (!confirmed) return;
-      showToast("Đang đồng bộ dữ liệu Shards...", "info");
+      showToast("Đang đồng bộ dữ liệu Shards lên GitHub...", "info");
       const res = await sendAdminAction({ action: "reindex_all_prefixes" });
       if (res && res.success) {
-        showToast(res.message || "Đã đồng bộ thành công!", "success");
+        showToast(res.message || "Đã đồng bộ thành công!", "success", 8000);
         await loadAllData();
       } else {
-        showToast("Lỗi đồng bộ: " + (res.error || "Không rõ"), "error");
+        showToast("Lỗi đồng bộ: " + (res.error || "Không rõ"), "error", 8000);
       }
     }
 
