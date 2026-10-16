@@ -1324,6 +1324,40 @@ function renderAdminHTML() {
     .form-group input:focus, .form-group select:focus { border-color: #0284c7; box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15); }
     .form-group input:disabled, .form-group select:disabled { opacity: 0.7; cursor: not-allowed; }
 
+    .date-input-wrap {
+      position: relative;
+      display: flex;
+      align-items: center;
+      width: 100%;
+    }
+    .date-input-wrap input[type="text"] {
+      width: 100%;
+      padding-right: 38px;
+      font-family: monospace, -apple-system, sans-serif;
+    }
+    .date-picker-icon {
+      position: absolute;
+      right: 12px;
+      pointer-events: none;
+      font-size: 15px;
+      line-height: 1;
+      opacity: 0.7;
+    }
+    .native-date-hidden {
+      position: absolute;
+      right: 4px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 32px;
+      height: 32px;
+      opacity: 0;
+      cursor: pointer;
+      border: none;
+      padding: 0;
+      margin: 0;
+      z-index: 2;
+    }
+
     .btn { padding: 9px 16px; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 13px; transition: 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
     .btn-blue { background: #0284c7; color: #fff; }
     .btn-green { background: #16a34a; color: #fff; }
@@ -1714,7 +1748,7 @@ function renderAdminHTML() {
       <div class="card" style="margin-bottom: 20px;">
         <div class="tab-header-row">
           <div>
-            <h3 style="margin: 0; font-size: 16px;">📱 Danh sách Kích hoạt</h3>
+            <h3 style="margin: 0; font-size: 16px;">📋 Danh sách Kích hoạt</h3>
           </div>
           <div class="tab-header-actions">
             <button type="button" class="btn btn-green" id="btnUploadLicense" style="padding: 7px 14px; font-size: 12px;" onclick="openUploadModal('license')" title="Tải lên tệp Excel danh sách kích hoạt">📥 Upload Excel</button>
@@ -1994,7 +2028,7 @@ function renderAdminHTML() {
   <div class="modal-backdrop" id="createLicenseModal">
     <div class="modal-box" style="max-width: 520px;">
       <div class="modal-header">
-        <h3 id="createLicenseModalTitle">➕ Thêm Kích hoạt Mới</h3>
+        <h3 id="createLicenseModalTitle">Thêm Kích hoạt Mới</h3>
         <span class="close-btn" onclick="closeCreateLicenseModal()">&times;</span>
       </div>
       
@@ -2054,11 +2088,19 @@ function renderAdminHTML() {
       </div>
       <div class="form-group">
         <label>NGÀY TẠO (YYYY-MM-DD) (*)</label>
-        <input type="date" id="giftStartDate">
+        <div class="date-input-wrap">
+          <input type="text" id="giftStartDate" placeholder="YYYY-MM-DD" pattern="\d{4}-\d{2}-\d{2}" maxlength="10" oninput="syncInputToDatePicker('giftStartDate', 'giftStartDatePicker')">
+          <span class="date-picker-icon" title="Chọn ngày từ lịch">📅</span>
+          <input type="date" id="giftStartDatePicker" class="native-date-hidden" onchange="syncDatePickerToInput('giftStartDatePicker', 'giftStartDate')">
+        </div>
       </div>
       <div class="form-group">
         <label>NGÀY HẾT HẠN (YYYY-MM-DD) (*)</label>
-        <input type="date" id="giftExpDate">
+        <div class="date-input-wrap">
+          <input type="text" id="giftExpDate" placeholder="YYYY-MM-DD" pattern="\d{4}-\d{2}-\d{2}" maxlength="10" oninput="syncInputToDatePicker('giftExpDate', 'giftExpDatePicker')">
+          <span class="date-picker-icon" title="Chọn ngày từ lịch">📅</span>
+          <input type="date" id="giftExpDatePicker" class="native-date-hidden" onchange="syncDatePickerToInput('giftExpDatePicker', 'giftExpDate')">
+        </div>
       </div>
       <div class="form-group">
         <label>GHI CHÚ</label>
@@ -2310,7 +2352,7 @@ function renderAdminHTML() {
       el.classList.add("active");
 
       const titles = {
-        listTab: "Danh sách Kích hoạt",
+        listTab: "Quản lý Kích hoạt",
         giftTab: "Quản lý Gift Code",
         romTab: "Quản lý Sản phẩm"
       };
@@ -3038,8 +3080,8 @@ function renderAdminHTML() {
         return '<tr data-id="' + item.id + '">' +
           '<td style="text-align: center; font-weight: bold;">' + stt + '</td>' +
           '<td><input type="text" class="bulk-cell-input bulk-gift-code" value="' + (item.gift_code || "") + '" style="font-family: monospace; font-weight: bold; text-transform: uppercase;"></td>' +
-          '<td><input type="date" class="bulk-cell-input bulk-gift-start" value="' + (item.start_date || "") + '"></td>' +
-          '<td><input type="date" class="bulk-cell-input bulk-gift-exp" value="' + (item.expiration_date || "") + '"></td>' +
+          '<td><input type="text" class="bulk-cell-input bulk-gift-start" value="' + (item.start_date || "") + '" placeholder="YYYY-MM-DD" maxlength="10" style="text-align: center; font-family: monospace;"></td>' +
+          '<td><input type="text" class="bulk-cell-input bulk-gift-exp" value="' + (item.expiration_date || "") + '" placeholder="YYYY-MM-DD" maxlength="10" style="text-align: center; font-family: monospace;"></td>' +
           '<td class="col-note"><input type="text" class="bulk-cell-input bulk-gift-note" value="' + (item.note || "") + '"></td>' +
         '</tr>';
       }).join("");
@@ -3065,7 +3107,11 @@ function renderAdminHTML() {
 
         if (!gift_code) return showToast("GIFT_CODE không được để trống!", "warn");
         if (!start_date || !expiration_date) return showToast("Vui lòng chọn đủ ngày bắt đầu và kết thúc!", "warn");
-        if (start_date > expiration_date) return showToast("Ngày bắt đầu không được lớn hơn ngày hết hạn!", "warn");
+        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+        if (!dateRegex.test(start_date) || !dateRegex.test(expiration_date)) {
+          return showToast("Mục " + stt + ": Định dạng ngày phải là YYYY-MM-DD (Ví dụ: 2026-10-16)!", "warn");
+        }
+        if (start_date > expiration_date) return showToast("Mục " + stt + ": Ngày bắt đầu không được lớn hơn ngày hết hạn!", "warn");
 
         itemsToUpdate.push({ id: id, gift_code: gift_code, start_date: start_date, expiration_date: expiration_date, note: note });
       }
@@ -3352,16 +3398,37 @@ function renderAdminHTML() {
       }
     }
 
+    function syncInputToDatePicker(inputId, pickerId) {
+      const val = (document.getElementById(inputId).value || "").trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
+        const picker = document.getElementById(pickerId);
+        if (picker) picker.value = val;
+      }
+    }
+
+    function syncDatePickerToInput(pickerId, inputId) {
+      const picker = document.getElementById(pickerId);
+      const input = document.getElementById(inputId);
+      if (picker && input && picker.value) {
+        input.value = picker.value;
+      }
+    }
+
     function openCreateGiftModal() {
       document.getElementById("giftId").value = "";
       document.getElementById("giftModalTitle").innerText = "Tạo Gift Code Mới";
       document.getElementById("giftCodeInput").value = "";
       const today = new Date().toISOString().split("T")[0];
       document.getElementById("giftStartDate").value = today;
+      const startPicker = document.getElementById("giftStartDatePicker");
+      if (startPicker) startPicker.value = today;
 
       const nextMonth = new Date();
       nextMonth.setDate(nextMonth.getDate() + 30);
-      document.getElementById("giftExpDate").value = nextMonth.toISOString().split("T")[0];
+      const expStr = nextMonth.toISOString().split("T")[0];
+      document.getElementById("giftExpDate").value = expStr;
+      const expPicker = document.getElementById("giftExpDatePicker");
+      if (expPicker) expPicker.value = expStr;
 
       document.getElementById("giftNote").value = "";
       document.getElementById("giftModal").style.display = "flex";
@@ -3373,8 +3440,12 @@ function renderAdminHTML() {
       document.getElementById("giftId").value = item.id;
       document.getElementById("giftModalTitle").innerText = "Chỉnh Sửa Gift Code";
       document.getElementById("giftCodeInput").value = item.gift_code;
-      document.getElementById("giftStartDate").value = item.start_date;
-      document.getElementById("giftExpDate").value = item.expiration_date;
+      document.getElementById("giftStartDate").value = item.start_date || "";
+      const startPicker = document.getElementById("giftStartDatePicker");
+      if (startPicker) startPicker.value = item.start_date || "";
+      document.getElementById("giftExpDate").value = item.expiration_date || "";
+      const expPicker = document.getElementById("giftExpDatePicker");
+      if (expPicker) expPicker.value = item.expiration_date || "";
       document.getElementById("giftNote").value = item.note || "";
       document.getElementById("giftModal").style.display = "flex";
     }
@@ -3400,6 +3471,10 @@ function renderAdminHTML() {
 
       if (!gift_code) return showToast("Vui lòng nhập GIFT_CODE!", "warn");
       if (!start_date || !expiration_date) return showToast("Vui lòng chọn ngày bắt đầu và kết thúc!", "warn");
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(start_date) || !dateRegex.test(expiration_date)) {
+        return showToast("Định dạng ngày phải là YYYY-MM-DD (Ví dụ: 2026-10-16)!", "warn");
+      }
       if (start_date > expiration_date) return showToast("Ngày bắt đầu không được lớn hơn ngày hết hạn!", "warn");
 
       const saveBtn = document.getElementById("btnSaveGift");
