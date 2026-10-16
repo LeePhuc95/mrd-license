@@ -3,7 +3,7 @@
  * - Thống kê toàn diện mọi lượt đọc/ghi/truy cập của License (Trần: 50.000 req)
  * - Widget hiển thị số req License đã dùng và số lượng còn lại
  * - Phân mảnh tĩnh theo tiền tố (Prefix Chunking/Sharding): /{prefix}.json
- *   Mã hóa XOR với khóa 1012 -> Hex
+ *   Mã hóa XOR
  */
 
 export default {
@@ -52,6 +52,46 @@ export default {
 
       ctx.waitUntil(cache.put(cacheKey, newResponse.clone()));
       return newResponse;
+    }
+
+    // =========================================================================
+    // 1.2. ENDPOINT ANDROID: GIFT CODE STATIC JSON (MÃ HÓA XOR CÓ CDN CACHE)
+    // Hỗ trợ cả /json/giftcode.json và /giftcode.json
+    // =========================================================================
+    if ((url.pathname === "/json/giftcode.json" || url.pathname === "/giftcode.json") && request.method === "GET") {
+      let cachedResponse = await cache.match(request);
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+
+      await ensureDbSchema(env);
+
+      let { results } = await env.DB.prepare(
+        "SELECT gift_code, start_date, expiration_date FROM gift_keys ORDER BY created_at DESC"
+      ).all();
+
+      const records = results || [];
+      const xorKey = env?.XOR_KEY;
+
+      // Cấu trúc: GIFT_CODE:START_DATE:EXPIRATION_DATE mã hóa XOR -> Hex
+      const encryptedList = records.map(r => {
+        const raw = `${r.gift_code}:${r.start_date}:${r.expiration_date}`;
+        return xorEncryptHex(raw, xorKey);
+      });
+
+      const response = new Response(JSON.stringify(encryptedList), {
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "public, max-age=3600, s-maxage=86400"
+        }
+      });
+
+      ctx.waitUntil(Promise.all([
+        cache.put(new Request(`${url.origin}/json/giftcode.json`, { method: "GET" }), response.clone()),
+        cache.put(new Request(`${url.origin}/giftcode.json`, { method: "GET" }), response.clone())
+      ]));
+      return response;
     }
 
     // =========================================================================
@@ -183,11 +223,12 @@ export default {
       await ensureDbSchema(env);
       const MAX_LICENSE_REQ = 50000; // Trần 50.000 req dành riêng cho License
 
-      // Truy vấn đồng thời dữ liệu bản quyền và dữ liệu request thực tế
-      const [licensesRes, romsRes, statsRes] = await Promise.all([
+      // Truy vấn đồng thời dữ liệu bản quyền, ROM, request quota và Gift keys
+      const [licensesRes, romsRes, statsRes, giftKeysRes] = await Promise.all([
         env.DB.prepare("SELECT * FROM licenses ORDER BY stt DESC").all(),
         env.DB.prepare("SELECT * FROM rom_categories ORDER BY name ASC").all(),
-        env.DB.prepare("SELECT req_count FROM system_stats WHERE date_key = ? AND service_type = 'LICENSE'").bind(today).first()
+        env.DB.prepare("SELECT req_count FROM system_stats WHERE date_key = ? AND service_type = 'LICENSE'").bind(today).first(),
+        env.DB.prepare("SELECT * FROM gift_keys ORDER BY created_at DESC").all()
       ]);
 
       const licenseUsage = statsRes ? (statsRes.req_count || 0) : 0;
@@ -199,6 +240,7 @@ export default {
       return jsonResponse({
         licenses: licensesList,
         rom_categories: (romsRes.results || []).map(r => r.name),
+        gift_keys: giftKeysRes?.results || [],
         pages_domain: env.PAGES_DOMAIN ? env.PAGES_DOMAIN.replace(/\/+$/, '') : '',
         license_quota: {
           limit: MAX_LICENSE_REQ,
@@ -340,8 +382,104 @@ export default {
           }
         }
 
+        // Đồng bộ cả file json/giftcode.json
+        const giftRes = await syncGiftCodeToGitHub(env);
+        if (giftRes && giftRes.success) {
+          syncMsgs.push("json/giftcode.json: ✅ Thành công");
+        } else if (giftRes && !giftRes.success) {
+          syncMsgs.push(`json/giftcode.json: ❌ ${giftRes.error}`);
+        }
+
         const gitStatus = syncMsgs.length > 0 ? " | GitHub: " + syncMsgs.join("; ") : "";
         return jsonResponse({ success: true, count, message: `Đã đồng bộ ${count} bản ghi D1.${gitStatus}` });
+      }
+      else if (action === "create_gift_key") {
+        const { gift_code, start_date, expiration_date, note } = body;
+        if (!gift_code || !start_date || !expiration_date) {
+          return jsonResponse({ success: false, error: "Thiếu thông tin GIFT_CODE hoặc ngày hiệu lực" }, 400);
+        }
+
+        await ensureDbSchema(env);
+        const existing = await env.DB.prepare(
+          "SELECT id FROM gift_keys WHERE gift_code = ?"
+        ).bind(gift_code.trim()).first();
+
+        if (existing) {
+          return jsonResponse({ success: false, error: `Gift code "${gift_code}" đã tồn tại trong hệ thống!` }, 400);
+        }
+
+        await env.DB.prepare(`
+          INSERT INTO gift_keys (gift_code, start_date, expiration_date, note, created_at)
+          VALUES (?, ?, ?, ?, ?)
+        `).bind(gift_code.trim(), start_date.trim(), expiration_date.trim(), note || '', Date.now()).run();
+
+        await cache.delete(new Request(`${url.origin}/json/giftcode.json`, { method: "GET" }));
+        await cache.delete(new Request(`${url.origin}/giftcode.json`, { method: "GET" }));
+
+        const gitRes = await syncGiftCodeToGitHub(env);
+        let msg = "Đã tạo Gift Code thành công!";
+        if (gitRes && gitRes.success) {
+          msg += " (Đã lưu json/giftcode.json lên GitHub)";
+        } else if (gitRes && !gitRes.success) {
+          msg += ` (Lưu ý GitHub: ${gitRes.error})`;
+        }
+
+        return jsonResponse({ success: true, message: msg });
+      }
+      else if (action === "update_gift_key") {
+        const { id, gift_code, start_date, expiration_date, note } = body;
+        if (!id || !gift_code || !start_date || !expiration_date) {
+          return jsonResponse({ success: false, error: "Thiếu dữ liệu cập nhật Gift Code" }, 400);
+        }
+
+        await ensureDbSchema(env);
+        const duplicate = await env.DB.prepare(
+          "SELECT id FROM gift_keys WHERE gift_code = ? AND id != ?"
+        ).bind(gift_code.trim(), id).first();
+
+        if (duplicate) {
+          return jsonResponse({ success: false, error: `Gift code "${gift_code}" đã thuộc về mục khác!` }, 400);
+        }
+
+        await env.DB.prepare(`
+          UPDATE gift_keys SET gift_code = ?, start_date = ?, expiration_date = ?, note = ?
+          WHERE id = ?
+        `).bind(gift_code.trim(), start_date.trim(), expiration_date.trim(), note || '', id).run();
+
+        await cache.delete(new Request(`${url.origin}/json/giftcode.json`, { method: "GET" }));
+        await cache.delete(new Request(`${url.origin}/giftcode.json`, { method: "GET" }));
+
+        const gitRes = await syncGiftCodeToGitHub(env);
+        let msg = "Đã cập nhật Gift Code thành công!";
+        if (gitRes && !gitRes.success) {
+          msg += ` (Lưu ý GitHub: ${gitRes.error})`;
+        }
+
+        return jsonResponse({ success: true, message: msg });
+      }
+      else if (action === "delete_gift_key") {
+        await env.DB.prepare("DELETE FROM gift_keys WHERE id = ?").bind(body.id).run();
+
+        await cache.delete(new Request(`${url.origin}/json/giftcode.json`, { method: "GET" }));
+        await cache.delete(new Request(`${url.origin}/giftcode.json`, { method: "GET" }));
+
+        const gitRes = await syncGiftCodeToGitHub(env);
+        let msg = "Đã xóa Gift Code thành công!";
+        if (gitRes && !gitRes.success) {
+          msg += ` (Lưu ý GitHub: ${gitRes.error})`;
+        }
+        return jsonResponse({ success: true, message: msg });
+      }
+      else if (action === "sync_gift_code") {
+        await cache.delete(new Request(`${url.origin}/json/giftcode.json`, { method: "GET" }));
+        await cache.delete(new Request(`${url.origin}/giftcode.json`, { method: "GET" }));
+
+        const gitRes = await syncGiftCodeToGitHub(env);
+        if (gitRes && gitRes.success) {
+          return jsonResponse({ success: true, message: "Đã lưu json/giftcode.json lên GitHub thành công!" });
+        } else {
+          return jsonResponse({ success: false, error: gitRes ? gitRes.error : "Lỗi không xác định" });
+        }
       }
       else if (action === "add_rom") {
         const { name } = body;
@@ -421,7 +559,117 @@ async function ensureDbSchema(env) {
   } catch (e) {
     // Bỏ qua lỗi index
   }
+  try {
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS gift_keys (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        gift_code TEXT UNIQUE NOT NULL,
+        start_date TEXT NOT NULL,
+        expiration_date TEXT NOT NULL,
+        note TEXT,
+        created_at INTEGER
+      )
+    `).run();
+    await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_gift_keys_code ON gift_keys(gift_code)").run();
+  } catch (e) {
+    // Bỏ qua lỗi tạo bảng gift_keys
+  }
   schemaChecked = true;
+}
+
+/**
+ * Tự động đồng bộ file json/giftcode.json lên GitHub Repo
+ */
+async function syncGiftCodeToGitHub(env) {
+  const token = env?.GITHUB_TOKEN ? String(env.GITHUB_TOKEN).trim() : null;
+  const rawRepo = env?.GITHUB_REPO ? String(env.GITHUB_REPO).trim() : null;
+
+  if (!token) {
+    return { success: false, error: "Chưa cấu hình biến GITHUB_TOKEN trong Settings -> Environment variables của Pages" };
+  }
+  if (!rawRepo) {
+    return { success: false, error: "Chưa cấu hình biến GITHUB_REPO trong Settings -> Environment variables của Pages" };
+  }
+
+  const cleanRepo = rawRepo
+    .replace(/^https?:\/\/github\.com\//i, "")
+    .replace(/^\/+|\/+$/g, "");
+
+  try {
+    const { results } = await env.DB.prepare(
+      "SELECT gift_code, start_date, expiration_date FROM gift_keys ORDER BY created_at DESC"
+    ).all();
+
+    const records = results || [];
+    const xorKey = env?.XOR_KEY;
+
+    // Format: GIFT_CODE:START_DATE:EXPIRATION_DATE -> XOR encrypt với khóa env.XOR_KEY -> Hex
+    const encryptedList = records.map(r => {
+      const raw = `${r.gift_code}:${r.start_date}:${r.expiration_date}`;
+      return xorEncryptHex(raw, xorKey);
+    });
+
+    const fileContent = JSON.stringify(encryptedList, null, 2);
+    let binary = "";
+    const encoder = new TextEncoder();
+    const utf8Bytes = encoder.encode(fileContent);
+    for (let i = 0; i < utf8Bytes.length; i++) {
+      binary += String.fromCharCode(utf8Bytes[i]);
+    }
+    const contentBase64 = btoa(binary);
+
+    const filePath = "json/giftcode.json";
+    const apiUrl = `https://api.github.com/repos/${cleanRepo}/contents/${filePath}`;
+    const headers = {
+      "Authorization": `Bearer ${token}`,
+      "Accept": "application/vnd.github+json",
+      "User-Agent": "MRD-Cloudflare-Pages"
+    };
+
+    let existingSha = null;
+    try {
+      const getRes = await fetch(apiUrl, { headers });
+      if (getRes.ok) {
+        const fileInfo = await getRes.json();
+        existingSha = fileInfo.sha;
+      }
+    } catch (e) {
+      // File chưa tồn tại
+    }
+
+    const putBody = {
+      message: `Sync ${filePath} via MRD License Admin [skip ci]`,
+      content: contentBase64
+    };
+    if (existingSha) {
+      putBody.sha = existingSha;
+    }
+
+    const putRes = await fetch(apiUrl, {
+      method: "PUT",
+      headers: {
+        ...headers,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(putBody)
+    });
+
+    if (!putRes.ok) {
+      const errText = await putRes.text();
+      let errMsg = errText;
+      try {
+        const errJson = JSON.parse(errText);
+        if (errJson.message) errMsg = errJson.message;
+      } catch (_) { }
+      console.error(`Lỗi đẩy file ${filePath} lên GitHub:`, errMsg);
+      return { success: false, error: `GitHub API HTTP ${putRes.status}: ${errMsg}` };
+    }
+
+    return { success: true };
+  } catch (err) {
+    console.error(`Lỗi ngoại lệ syncGiftCodeToGitHub:`, err.message);
+    return { success: false, error: err.message };
+  }
 }
 
 /**
@@ -451,8 +699,8 @@ async function syncShardToGitHub(env, prefix) {
 
     const records = results || [];
 
-    // Format: SERIAL:ROM_VERSION:KEY_STATUS -> XOR encrypt với khóa env.XOR_KEY (mặc định "1012") -> Hex
-    const xorKey = env?.XOR_KEY || "1012";
+    // Format: SERIAL:ROM_VERSION:KEY_STATUS -> XOR encrypt với khóa env.XOR_KEY -> Hex
+    const xorKey = env?.XOR_KEY;
     const encryptedList = records.map(r => {
       const raw = `${r.serial}:${r.rom_version}:${r.key_status}`;
       return xorEncryptHex(raw, xorKey);
@@ -533,12 +781,13 @@ function getDevicePrefix(serial) {
 }
 
 /**
- * Mã hóa chuỗi text bằng XOR với khóa lặp tuần hoàn (mặc định env.XOR_KEY hoặc "1012"), xuất ra Hex
+ * Mã hóa chuỗi text bằng XOR với khóa lặp tuần hoàn (env.XOR_KEY), xuất ra Hex
  */
-function xorEncryptHex(text, key = "1012") {
+function xorEncryptHex(text, key) {
+  if (!key) return "";
   const encoder = new TextEncoder();
   const textBytes = encoder.encode(text);
-  const keyBytes = encoder.encode(String(key || "1012"));
+  const keyBytes = encoder.encode(String(key));
   let hex = "";
   for (let i = 0; i < textBytes.length; i++) {
     const b = textBytes[i] ^ keyBytes[i % keyBytes.length];
@@ -960,6 +1209,7 @@ function renderAdminHTML() {
       <li class="nav-item active" onclick="switchTab('listTab', this)">📋 Danh sách</li>
       <li class="nav-item" onclick="switchTab('createTab', this)">➕ Tạo mới</li>
       <li class="nav-item" onclick="switchTab('romTab', this)">📁 Danh mục ROM</li>
+      <li class="nav-item" onclick="switchTab('giftTab', this)">🎁 Quản lý Gift Code</li>
     </ul>
     
     <div class="sidebar-footer">
@@ -1086,6 +1336,81 @@ function renderAdminHTML() {
         </div>
       </div>
     </div>
+
+    <!-- TAB 4: QUẢN LÝ GIFT CODE -->
+    <div id="giftTab" class="tab-content">
+      <div class="card" style="margin-bottom: 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <h3 style="margin: 0; font-size: 16px;">🎁 Danh sách Gift Code</h3>
+            <a id="giftShardBadgeLink" href="/json/giftcode.json" target="_blank" title="Mở file JSON phân mảnh trên Cloudflare Pages" style="text-decoration:none;">
+              <span class="badge badge-shard">🚀 json/giftcode.json</span>
+            </a>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-blue" style="padding: 7px 12px; font-size: 12px;" onclick="handleSyncGiftCode()">🔄 Đồng bộ Giftcode</button>
+            <button class="btn btn-green" style="padding: 7px 12px; font-size: 12px;" onclick="openCreateGiftModal()">+ Tạo Gift Code</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 50px;">STT</th>
+                <th>GIFT_CODE</th>
+                <th>START_DATE</th>
+                <th>EXPIRATION_DATE</th>
+                <th>TRẠNG THÁI</th>
+                <th>NOTE</th>
+                <th style="width: 140px; text-align: center;">THAO TÁC</th>
+              </tr>
+            </thead>
+            <tbody id="giftTableBody">
+              <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">Đang tải dữ liệu Gift Code...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL TẠO / SỬA GIFT CODE -->
+  <div class="modal-backdrop" id="giftModal">
+    <div class="modal-box" style="max-width: 500px;">
+      <div class="modal-header">
+        <h3 id="giftModalTitle">Tạo Gift Code Mới</h3>
+        <span class="close-btn" onclick="closeGiftModal()">&times;</span>
+      </div>
+      
+      <input type="hidden" id="giftId">
+      <div class="form-group">
+        <label>GIFT_CODE (*)</label>
+        <div style="display: flex; gap: 8px;">
+          <input type="text" id="giftCodeInput" placeholder="Ví dụ: VIP2026XYZ" style="flex: 1;">
+          <button type="button" class="btn btn-gray" style="white-space: nowrap; font-size: 12px; padding: 0 10px;" onclick="generateRandomGiftCode()">🎲 Tạo mã</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>START_DATE (YYYY-MM-DD) (*)</label>
+        <input type="date" id="giftStartDate">
+      </div>
+      <div class="form-group">
+        <label>EXPIRATION_DATE (YYYY-MM-DD) (*)</label>
+        <input type="date" id="giftExpDate">
+      </div>
+      <div class="form-group">
+        <label>NOTE</label>
+        <input type="text" id="giftNote" placeholder="Ghi chú người nhận hoặc sự kiện...">
+      </div>
+      
+      <div class="modal-actions" style="margin-top: 20px; display: flex; justify-content: flex-end; gap: 10px;">
+        <button class="btn btn-gray" onclick="closeGiftModal()">Hủy</button>
+        <button class="btn btn-green" id="btnSaveGift" onclick="handleSaveGiftKey()">Lưu Gift Code</button>
+      </div>
+    </div>
   </div>
 
   <!-- MODAL CHI TIẾT -->
@@ -1151,7 +1476,7 @@ function renderAdminHTML() {
 
   <script>
     let currentAuthToken = "";
-    let systemData = { licenses: [], rom_categories: [] };
+    let systemData = { licenses: [], rom_categories: [], gift_keys: [] };
     let currentSelectedItem = null;
 
     function showToast(message, type = "info", duration = 4000) {
@@ -1239,7 +1564,8 @@ function renderAdminHTML() {
       const titles = {
         listTab: "Danh sách Bản quyền",
         createTab: "Tạo mới Bản quyền",
-        romTab: "Quản lý Danh mục ROM"
+        romTab: "Quản lý Danh mục ROM",
+        giftTab: "Quản lý Gift Code"
       };
       document.getElementById("topbarTitle").innerText = titles[tabId];
       if (window.innerWidth <= 768) toggleSidebar(false);
@@ -1312,6 +1638,7 @@ function renderAdminHTML() {
         renderLicenseTable();
         renderRomDropdowns();
         renderRomTable();
+        renderGiftTable();
 
       // CẬP NHẬT WIDGET ĐẾM REQUEST LICENSE
       if (systemData.license_quota) {
@@ -1389,6 +1716,138 @@ function renderAdminHTML() {
           <td><button type="button" class="btn btn-red" style="padding:4px 8px;font-size:11px;" onclick="handleDeleteRom('\${r}')">Xóa</button></td>
         </tr>
       \`).join('');
+    }
+
+    function renderGiftTable() {
+      const tbody = document.getElementById("giftTableBody");
+      if (!tbody) return;
+      const gifts = systemData.gift_keys || [];
+
+      const rawDomain = systemData.pages_domain || "";
+      const pagesBase = rawDomain.endsWith("/") ? rawDomain.slice(0, -1) : rawDomain;
+      const badgeLink = document.getElementById("giftShardBadgeLink");
+      if (badgeLink) {
+        badgeLink.href = pagesBase ? (pagesBase + "/json/giftcode.json") : "/json/giftcode.json";
+      }
+
+      if (!gifts.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding: 20px;">Chưa có Gift Code nào. Bấm nút "+ Tạo Gift Code" ở trên để thêm.</td></tr>';
+        return;
+      }
+
+      const todayStr = new Date().toISOString().split("T")[0];
+
+      tbody.innerHTML = gifts.map((item, index) => {
+        const stt = index + 1; // STT được hệ thống tự động sinh theo thứ tự, không lưu cố định trong DB
+        const isExpired = item.expiration_date < todayStr;
+        const statusBadge = isExpired
+          ? '<span class="badge badge-OFF">Hết hạn</span>'
+          : '<span class="badge badge-OK">Còn hạn</span>';
+
+        return \`
+          <tr>
+            <td><b>\${stt}</b></td>
+            <td><b><code>\${item.gift_code}</code></b></td>
+            <td><code>\${item.start_date}</code></td>
+            <td><code>\${item.expiration_date}</code></td>
+            <td>\${statusBadge}</td>
+            <td>\${item.note || "-"}</td>
+            <td style="text-align: center;">
+              <button type="button" class="btn btn-blue" style="padding: 4px 8px; font-size: 11px; margin-right: 4px;" onclick="openEditGiftModal(\${item.id})">Sửa</button>
+              <button type="button" class="btn btn-red" style="padding: 4px 8px; font-size: 11px;" onclick="handleDeleteGiftKey(\${item.id}, '\${item.gift_code}')">Xóa</button>
+            </td>
+          </tr>
+        \`;
+      }).join('');
+    }
+
+    function openCreateGiftModal() {
+      document.getElementById("giftId").value = "";
+      document.getElementById("giftModalTitle").innerText = "Tạo Gift Code Mới";
+      document.getElementById("giftCodeInput").value = "";
+      const today = new Date().toISOString().split("T")[0];
+      document.getElementById("giftStartDate").value = today;
+
+      const nextMonth = new Date();
+      nextMonth.setDate(nextMonth.getDate() + 30);
+      document.getElementById("giftExpDate").value = nextMonth.toISOString().split("T")[0];
+
+      document.getElementById("giftNote").value = "";
+      document.getElementById("giftModal").style.display = "flex";
+    }
+
+    function openEditGiftModal(id) {
+      const item = (systemData.gift_keys || []).find(g => g.id === id);
+      if (!item) return;
+      document.getElementById("giftId").value = item.id;
+      document.getElementById("giftModalTitle").innerText = "Chỉnh Sửa Gift Code";
+      document.getElementById("giftCodeInput").value = item.gift_code;
+      document.getElementById("giftStartDate").value = item.start_date;
+      document.getElementById("giftExpDate").value = item.expiration_date;
+      document.getElementById("giftNote").value = item.note || "";
+      document.getElementById("giftModal").style.display = "flex";
+    }
+
+    function closeGiftModal() {
+      document.getElementById("giftModal").style.display = "none";
+    }
+
+    function generateRandomGiftCode() {
+      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      let p1 = "", p2 = "";
+      for (let i = 0; i < 4; i++) p1 += chars.charAt(Math.floor(Math.random() * chars.length));
+      for (let i = 0; i < 4; i++) p2 += chars.charAt(Math.floor(Math.random() * chars.length));
+      document.getElementById("giftCodeInput").value = "GIFT-" + p1 + "-" + p2;
+    }
+
+    async function handleSaveGiftKey() {
+      const id = document.getElementById("giftId").value;
+      const gift_code = document.getElementById("giftCodeInput").value.trim().toUpperCase();
+      const start_date = document.getElementById("giftStartDate").value.trim();
+      const expiration_date = document.getElementById("giftExpDate").value.trim();
+      const note = document.getElementById("giftNote").value.trim();
+
+      if (!gift_code) return showToast("Vui lòng nhập GIFT_CODE!", "warn");
+      if (!start_date || !expiration_date) return showToast("Vui lòng chọn ngày bắt đầu và kết thúc!", "warn");
+      if (start_date > expiration_date) return showToast("Ngày bắt đầu không được lớn hơn ngày hết hạn!", "warn");
+
+      const action = id ? "update_gift_key" : "create_gift_key";
+      showToast("Đang lưu Gift Code...", "info");
+      const res = await sendAdminAction({ action, id: id ? Number(id) : undefined, gift_code, start_date, expiration_date, note });
+      if (res && res.success) {
+        closeGiftModal();
+        await loadAllData();
+        showToast(res.message || "Đã lưu Gift Code thành công!", "success", 6000);
+      } else {
+        showToast("Lỗi lưu Gift Code: " + (res.error || "Không rõ"), "error", 6000);
+      }
+    }
+
+    async function handleDeleteGiftKey(id, code) {
+      const confirmed = await showConfirm(
+        "Xác nhận xóa Gift Code",
+        'Bạn có chắc chắn muốn xóa mã gift code "' + code + '"?',
+        true
+      );
+      if (!confirmed) return;
+      showToast("Đang xóa Gift Code...", "info");
+      const res = await sendAdminAction({ action: "delete_gift_key", id: Number(id) });
+      if (res && res.success) {
+        await loadAllData();
+        showToast(res.message || "Đã xóa Gift Code thành công!", "success", 6000);
+      } else {
+        showToast("Lỗi xóa Gift Code: " + (res.error || "Không rõ"), "error", 6000);
+      }
+    }
+
+    async function handleSyncGiftCode() {
+      showToast("Đang đồng bộ giftcode.json lên GitHub...", "info");
+      const res = await sendAdminAction({ action: "sync_gift_code" });
+      if (res && res.success) {
+        showToast(res.message || "Đã đồng bộ giftcode.json thành công!", "success", 8000);
+      } else {
+        showToast("Lỗi đồng bộ: " + (res.error || "Không rõ"), "error", 8000);
+      }
     }
 
     function openDetailModal(stt) {
