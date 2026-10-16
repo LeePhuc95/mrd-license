@@ -145,7 +145,7 @@ export default {
         headers: {
           "Content-Type": "application/json; charset=utf-8",
           "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "public, max-age=86400, s-maxage=604800"
+          "Cache-Control": "public, max-age=60, s-maxage=60, must-revalidate"
         }
       });
 
@@ -241,6 +241,7 @@ export default {
         licenses: licensesList,
         rom_categories: (romsRes.results || []).map(r => r.name),
         gift_keys: giftKeysRes?.results || [],
+        github_repo: env.GITHUB_REPO ? String(env.GITHUB_REPO).trim() : '',
         pages_domain: env.PAGES_DOMAIN ? env.PAGES_DOMAIN.replace(/\/+$/, '') : '',
         license_quota: {
           limit: MAX_LICENSE_REQ,
@@ -1382,26 +1383,28 @@ function renderAdminHTML() {
       <div class="topbar-left">
         <button class="menu-toggle-btn" onclick="toggleSidebar(true)">☰</button>
         <div style="font-size: 17px; font-weight: bold;" id="topbarTitle">Danh sách Bản quyền</div>
-        <button class="btn btn-blue" style="margin-left: 8px; padding: 6px 12px; font-size: 12px;" onclick="handleSyncAllPrefixes()" title="Tính toán lại Prefix và đồng bộ cache phân mảnh">🔄 Đồng bộ Shards</button>
       </div>
-      <div class="theme-dropdown-container">
-        <button class="theme-toggle-btn" id="themeBtn" onclick="toggleThemeDropdown(event)" title="Chọn giao diện">
-          <span id="themeBtnIcon">🌙</span>
-          <span id="themeBtnText">Giao diện</span>
-        </button>
-        <div class="theme-dropdown-menu" id="themeDropdownMenu">
-          <div class="theme-dropdown-header">Giao diện</div>
-          <div class="theme-dropdown-item" id="themeOpt-light" onclick="setThemeMode('light')">
-            <span>☀️ Sáng</span>
-            <span class="theme-check"></span>
-          </div>
-          <div class="theme-dropdown-item" id="themeOpt-dark" onclick="setThemeMode('dark')">
-            <span>🌙 Tối</span>
-            <span class="theme-check"></span>
-          </div>
-          <div class="theme-dropdown-item" id="themeOpt-system" onclick="setThemeMode('system')">
-            <span>💻 Hệ thống</span>
-            <span class="theme-check"></span>
+      <div class="topbar-right" style="display: flex; align-items: center; gap: 10px;">
+        <button class="btn btn-blue" id="btnSyncShards" style="padding: 6px 14px; font-size: 12px; border-radius: 20px;" onclick="handleSyncAllPrefixes()" title="Tính toán lại Prefix và đồng bộ cache phân mảnh">🔄 Đồng bộ Shards</button>
+        <div class="theme-dropdown-container">
+          <button class="theme-toggle-btn" id="themeBtn" onclick="toggleThemeDropdown(event)" title="Chọn giao diện">
+            <span id="themeBtnIcon">🌙</span>
+            <span id="themeBtnText">Giao diện</span>
+          </button>
+          <div class="theme-dropdown-menu" id="themeDropdownMenu">
+            <div class="theme-dropdown-header">Giao diện</div>
+            <div class="theme-dropdown-item" id="themeOpt-light" onclick="setThemeMode('light')">
+              <span>☀️ Sáng</span>
+              <span class="theme-check"></span>
+            </div>
+            <div class="theme-dropdown-item" id="themeOpt-dark" onclick="setThemeMode('dark')">
+              <span>🌙 Tối</span>
+              <span class="theme-check"></span>
+            </div>
+            <div class="theme-dropdown-item" id="themeOpt-system" onclick="setThemeMode('system')">
+              <span>💻 Hệ thống</span>
+              <span class="theme-check"></span>
+            </div>
           </div>
         </div>
       </div>
@@ -1415,13 +1418,13 @@ function renderAdminHTML() {
             <thead>
               <tr>
                 <th>STT</th>
-                <th>SHARD (FILE)</th>
                 <th>SERIAL</th>
                 <th>ROM_VERSION</th>
                 <th>KEY_STATUS</th>
                 <th>EMAIL/PHONE</th>
                 <th>COUNTRY</th>
                 <th>GMAIL_NOTIFY</th>
+                <th>SHARD (FILE)</th>
                 <th>NOTE</th>
               </tr>
             </thead>
@@ -1761,6 +1764,12 @@ function renderAdminHTML() {
         romTab: "Quản lý Sản phẩm"
       };
       document.getElementById("topbarTitle").innerText = titles[tabId];
+
+      const syncBtn = document.getElementById("btnSyncShards");
+      if (syncBtn) {
+        syncBtn.style.display = (tabId === "listTab" || tabId === "giftTab") ? "inline-flex" : "none";
+      }
+
       if (window.innerWidth <= 768) toggleSidebar(false);
     }
 
@@ -1860,35 +1869,49 @@ function renderAdminHTML() {
     }
   }
 
-  function renderLicenseTable() {
-    const tbody = document.getElementById("licenseTableBody");
-    if (!systemData.licenses.length) {
-      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; color:var(--text-muted);">Chưa có bản ghi nào.</td></tr>';
-      return;
+    function getGithubFileUrl(filePath) {
+      let cleanRepo = (systemData.github_repo || "").trim();
+      if (cleanRepo.indexOf("github.com/") !== -1) {
+        cleanRepo = cleanRepo.split("github.com/")[1];
+      }
+      while (cleanRepo.startsWith("/")) cleanRepo = cleanRepo.slice(1);
+      while (cleanRepo.endsWith("/")) cleanRepo = cleanRepo.slice(0, -1);
+
+      if (!cleanRepo) {
+        const rawDomain = systemData.pages_domain || "";
+        const pagesBase = rawDomain.endsWith("/") ? rawDomain.slice(0, -1) : rawDomain;
+        return pagesBase ? (pagesBase + "/" + filePath) : ("/" + filePath);
+      }
+      return "https://github.com/" + cleanRepo + "/blob/main/" + filePath;
     }
 
-    const rawDomain = systemData.pages_domain || "";
-    const pagesBase = rawDomain.endsWith("/") ? rawDomain.slice(0, -1) : rawDomain;
+    function renderLicenseTable() {
+      const tbody = document.getElementById("licenseTableBody");
+      if (!systemData.licenses.length) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; color:var(--text-muted);">Chưa có bản ghi nào.</td></tr>';
+        return;
+      }
+
       tbody.innerHTML = systemData.licenses.map((item, index) => {
         const stt = index + 1; // Tự động đánh số STT liên tục 1, 2, 3...
-        const linkHref = pagesBase ? (pagesBase + "/json/" + item.prefix + ".json") : ("/json/" + item.prefix + ".json");
+        const linkHref = getGithubFileUrl("json/" + item.prefix + ".json");
         return \`
-        <tr onclick="openDetailModal(\${item.id})">
-          <td><b>\${stt}</b></td>
-          <td>
-            <a href="\${linkHref}" target="_blank" onclick="event.stopPropagation()" title="Mở file JSON phân mảnh trên Cloudflare Pages" style="text-decoration:none;">
-              <span class="badge badge-shard">🚀 json/\${item.prefix}.json</span>
-            </a>
-          </td>
-          <td><b><code>\${item.serial}</code></b></td>
-          <td><code>\${item.rom_version}</code></td>
-          <td><span class="badge badge-\${item.key_status}">\${item.key_status}</span></td>
-          <td>\${item.email_phone || "-"}</td>
-          <td>\${item.country}</td>
-          <td><span class="badge badge-\${item.gmail_notify}">\${item.gmail_notify}</span></td>
-          <td>\${item.note || ""}</td>
-        </tr>
-      \`;
+          <tr onclick="openDetailModal(\${item.id})">
+            <td><b>\${stt}</b></td>
+            <td><b><code>\${item.serial}</code></b></td>
+            <td><code>\${item.rom_version}</code></td>
+            <td><span class="badge badge-\${item.key_status}">\${item.key_status}</span></td>
+            <td>\${item.email_phone || "-"}</td>
+            <td>\${item.country}</td>
+            <td><span class="badge badge-\${item.gmail_notify}">\${item.gmail_notify}</span></td>
+            <td>
+              <a href="\${linkHref}" target="_blank" onclick="event.stopPropagation()" title="Mở file JSON trên GitHub Repo" style="text-decoration:none;">
+                <span class="badge badge-shard">🚀 json/\${item.prefix}.json</span>
+              </a>
+            </td>
+            <td>\${item.note || ""}</td>
+          </tr>
+        \`;
       }).join('');
     }
 
@@ -1917,11 +1940,10 @@ function renderAdminHTML() {
       if (!tbody) return;
       const gifts = systemData.gift_keys || [];
 
-      const rawDomain = systemData.pages_domain || "";
-      const pagesBase = rawDomain.endsWith("/") ? rawDomain.slice(0, -1) : rawDomain;
       const badgeLink = document.getElementById("giftShardBadgeLink");
       if (badgeLink) {
-        badgeLink.href = pagesBase ? (pagesBase + "/json/giftcode.json") : "/json/giftcode.json";
+        badgeLink.href = getGithubFileUrl("json/giftcode.json");
+        badgeLink.title = "Mở file json/giftcode.json trên GitHub Repo";
       }
 
       if (!gifts.length) {
