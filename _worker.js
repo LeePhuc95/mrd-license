@@ -24,172 +24,8 @@ export default {
       );
     }
 
-    const cache = caches.default;
-    const cacheKey = new Request(`${url.origin}/api/blocklist`, { method: "GET" });
-
     // =========================================================================
-    // 1. ENDPOINT ANDROID: ĐỌC BLOCKLIST (CÓ CDN CACHE)
-    // =========================================================================
-    if (url.pathname === "/api/blocklist" && request.method === "GET") {
-      let cachedResponse = await cache.match(cacheKey);
-      if (cachedResponse) return cachedResponse;
-
-      const { results } = await env.DB.prepare(
-        "SELECT serial, rom_version FROM licenses WHERE key_status != 'OK'"
-      ).all();
-
-      const blockedList = (results || []).map(r => `${r.serial}_${r.rom_version}`);
-      const newResponse = new Response(JSON.stringify({
-        server_time: Math.floor(Date.now() / 1000),
-        blocked_devices: blockedList
-      }), {
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "public, max-age=86400"
-        }
-      });
-
-      ctx.waitUntil(cache.put(cacheKey, newResponse.clone()));
-      return newResponse;
-    }
-
-    // =========================================================================
-    // 1.2. ENDPOINT ANDROID: GIFT CODE STATIC JSON (MÃ HÓA XOR CÓ CDN CACHE)
-    // Hỗ trợ cả /json/giftcode.json và /giftcode.json
-    // =========================================================================
-    if ((url.pathname === "/json/giftcode.json" || url.pathname === "/giftcode.json") && request.method === "GET") {
-      let cachedResponse = await cache.match(request);
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-
-      await ensureDbSchema(env);
-
-      let { results } = await env.DB.prepare(
-        "SELECT gift_code, start_date, expiration_date FROM gift_keys ORDER BY created_at DESC"
-      ).all();
-
-      const records = results || [];
-      const xorKey = env?.XOR_KEY;
-
-      // Cấu trúc: GIFT_CODE:START_DATE:EXPIRATION_DATE mã hóa XOR -> Hex
-      const encryptedList = records.map(r => {
-        const raw = `${r.gift_code}:${r.start_date}:${r.expiration_date}`;
-        return xorEncryptHex(raw, xorKey);
-      });
-
-      const response = new Response(JSON.stringify(encryptedList), {
-        headers: {
-          "Content-Type": "application/json; charset=utf-8",
-          "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "public, max-age=3600, s-maxage=86400"
-        }
-      });
-
-      ctx.waitUntil(Promise.all([
-        cache.put(new Request(`${url.origin}/json/giftcode.json`, { method: "GET" }), response.clone()),
-        cache.put(new Request(`${url.origin}/giftcode.json`, { method: "GET" }), response.clone())
-      ]));
-      return response;
-    }
-
-    // =========================================================================
-    // 1.5. ENDPOINT ANDROID: PHÂN MẢNH SHARD STATIC JSON (PREFIX CHUNKING CÓ CDN CACHE)
-    // Hỗ trợ cả /json/<prefix>.json, /<prefix>.json và /api/chunks/<prefix>.json
-    // =========================================================================
-    const shardMatch = url.pathname.match(/^\/(?:(?:json|api\/chunks)\/)?([a-z0-9+/=_-]{1,10})\.json$/i);
-    if (shardMatch && request.method === "GET") {
-      const prefix = shardMatch[1].toLowerCase();
-      let cachedResponse = await cache.match(request);
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-
-      await ensureDbSchema(env);
-
-      let { results } = await env.DB.prepare(
-        "SELECT serial, rom_version, key_status, prefix FROM licenses WHERE prefix = ?"
-      ).bind(prefix).all();
-
-      let records = results || [];
-
-      // Nếu chưa có bản ghi theo prefix (do dữ liệu cũ chưa đánh index prefix), kiểm tra và backfill
-      if (records.length === 0) {
-        const unindexed = await env.DB.prepare(
-          "SELECT serial, rom_version, key_status, prefix FROM licenses WHERE prefix IS NULL"
-        ).all();
-        if (unindexed.results && unindexed.results.length > 0) {
-          const matched = [];
-          for (const row of unindexed.results) {
-            const p = getDevicePrefix(row.serial);
-            if (p === prefix) {
-              matched.push(row);
-              ctx.waitUntil(
-                env.DB.prepare("UPDATE licenses SET prefix = ? WHERE serial = ?").bind(p, row.serial).run().catch(() => { })
-              );
-            }
-          }
-          records = matched;
-        }
-      }
-
-      // Định dạng dữ liệu: SERIAL:ROM_VERSION:KEY_STATUS mã hóa XOR khóa env.XOR_KEY -> Hex
-      const xorKey = env?.XOR_KEY;
-      const encryptedList = records.map(r => {
-        const raw = `${r.serial}:${r.rom_version}:${r.key_status}`;
-        return xorEncryptHex(raw, xorKey);
-      });
-
-      const response = new Response(JSON.stringify(encryptedList), {
-        headers: {
-          "Content-Type": "application/json; charset=utf-8",
-          "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "public, max-age=60, s-maxage=60, must-revalidate"
-        }
-      });
-
-      ctx.waitUntil(Promise.all([
-        cache.put(new Request(`${url.origin}/json/${prefix}.json`, { method: "GET" }), response.clone()),
-        cache.put(new Request(`${url.origin}/${prefix}.json`, { method: "GET" }), response.clone())
-      ]));
-      return response;
-    }
-
-    // =========================================================================
-    // 2. ENDPOINT ANDROID: KÍCH HOẠT THIẾT BỊ
-    // =========================================================================
-    if (url.pathname === "/api/activate" && request.method === "POST") {
-      try {
-        const { serial, rom_version } = await request.json();
-        if (!serial || !rom_version) {
-          return jsonResponse({ success: false, message: "Thiếu Serial hoặc ROM Version" }, 400);
-        }
-
-        const device = await env.DB.prepare(
-          "SELECT * FROM licenses WHERE serial = ? AND rom_version = ?"
-        ).bind(serial, rom_version).first();
-
-        if (!device) {
-          return jsonResponse({ success: false, message: "Thiết bị chưa được đăng ký trong hệ thống" }, 404);
-        }
-
-        if (device.key_status !== "OK") {
-          return jsonResponse({ success: false, message: "Kích hoạt đang bị ngưng hoặc đã xóa" }, 403);
-        }
-
-        if (device.gmail_notify === "NONE" && device.email_phone && device.email_phone.includes("@")) {
-          ctx.waitUntil(sendMailAndUpdateStatus(env, device));
-        }
-
-        return jsonResponse({ success: true, status: "OK", token: `LIC_${serial}_${rom_version}_OK` });
-      } catch (err) {
-        return jsonResponse({ success: false, error: err.message }, 500);
-      }
-    }
-
-    // =========================================================================
-    // 3. API ADMIN
+    // 1. API ADMIN
     // =========================================================================
     const adminPassword = env.ADMIN_PASSWORD;
     const authHeader = request.headers.get("Authorization");
@@ -294,10 +130,6 @@ export default {
            VALUES (?, ?, ?, ?, ?, 'NONE', ?, ?, ?)`
         ).bind(serial, rom_version, key_status || 'OK', email_phone || '', country || 'VN', note || '', Date.now(), prefix).run();
 
-        // Xóa CDN cache cục bộ cho prefix phân mảnh
-        await cache.delete(new Request(`${url.origin}/json/${prefix}.json`, { method: "GET" }));
-        await cache.delete(new Request(`${url.origin}/${prefix}.json`, { method: "GET" }));
-
         // Tự động đẩy file phân mảnh lên GitHub Repo cho Cloudflare Pages
         const gitRes = await syncShardToGitHub(env, prefix);
         let msg = "Đã thêm thành công!";
@@ -333,20 +165,12 @@ export default {
            WHERE id = ?`
         ).bind(serial, rom_version, key_status, email_phone || '', country, note || '', newPrefix, id).run();
 
-        await cache.delete(cacheKey);
-
-        // Xóa CDN cache phân mảnh cũ và mới & đồng bộ lên GitHub
+        // Đồng bộ lên GitHub
         let gitNotice = "";
-        if (oldPrefix) {
-          await cache.delete(new Request(`${url.origin}/json/${oldPrefix}.json`, { method: "GET" }));
-          await cache.delete(new Request(`${url.origin}/${oldPrefix}.json`, { method: "GET" }));
-          if (oldPrefix !== newPrefix) {
-            await syncShardToGitHub(env, oldPrefix);
-          }
+        if (oldPrefix && oldPrefix !== newPrefix) {
+          await syncShardToGitHub(env, oldPrefix);
         }
         if (newPrefix) {
-          await cache.delete(new Request(`${url.origin}/json/${newPrefix}.json`, { method: "GET" }));
-          await cache.delete(new Request(`${url.origin}/${newPrefix}.json`, { method: "GET" }));
           const gitRes = await syncShardToGitHub(env, newPrefix);
           if (gitRes && !gitRes.success) {
             gitNotice = ` (Lưu ý GitHub: ${gitRes.error})`;
@@ -360,12 +184,9 @@ export default {
         const prefix = oldItem?.prefix || (oldItem ? getDevicePrefix(oldItem.serial) : null);
 
         await env.DB.prepare("DELETE FROM licenses WHERE id = ?").bind(body.id).run();
-        await cache.delete(cacheKey);
 
         let gitNotice = "";
         if (prefix) {
-          await cache.delete(new Request(`${url.origin}/json/${prefix}.json`, { method: "GET" }));
-          await cache.delete(new Request(`${url.origin}/${prefix}.json`, { method: "GET" }));
           const gitRes = await syncShardToGitHub(env, prefix);
           if (gitRes && !gitRes.success) {
             gitNotice = ` (Lưu ý GitHub: ${gitRes.error})`;
@@ -383,8 +204,6 @@ export default {
           await env.DB.prepare("UPDATE licenses SET prefix = ? WHERE id = ?").bind(p, row.id).run();
           count++;
           purgedPrefixes.add(p);
-          await cache.delete(new Request(`${url.origin}/json/${p}.json`, { method: "GET" }));
-          await cache.delete(new Request(`${url.origin}/${p}.json`, { method: "GET" }));
         }
 
         // Đẩy tất cả các shard phân mảnh lên GitHub Repo cho Pages và thu thập kết quả
@@ -429,9 +248,6 @@ export default {
           VALUES (?, ?, ?, ?, ?)
         `).bind(gift_code.trim(), start_date.trim(), expiration_date.trim(), note || '', Date.now()).run();
 
-        await cache.delete(new Request(`${url.origin}/json/giftcode.json`, { method: "GET" }));
-        await cache.delete(new Request(`${url.origin}/giftcode.json`, { method: "GET" }));
-
         const gitRes = await syncGiftCodeToGitHub(env);
         let msg = "Đã tạo Gift Code thành công!";
         if (gitRes && gitRes.success) {
@@ -462,9 +278,6 @@ export default {
           WHERE id = ?
         `).bind(gift_code.trim(), start_date.trim(), expiration_date.trim(), note || '', id).run();
 
-        await cache.delete(new Request(`${url.origin}/json/giftcode.json`, { method: "GET" }));
-        await cache.delete(new Request(`${url.origin}/giftcode.json`, { method: "GET" }));
-
         const gitRes = await syncGiftCodeToGitHub(env);
         let msg = "Đã cập nhật Gift Code thành công!";
         if (gitRes && !gitRes.success) {
@@ -476,9 +289,6 @@ export default {
       else if (action === "delete_gift_key") {
         await env.DB.prepare("DELETE FROM gift_keys WHERE id = ?").bind(body.id).run();
 
-        await cache.delete(new Request(`${url.origin}/json/giftcode.json`, { method: "GET" }));
-        await cache.delete(new Request(`${url.origin}/giftcode.json`, { method: "GET" }));
-
         const gitRes = await syncGiftCodeToGitHub(env);
         let msg = "Đã xóa Gift Code thành công!";
         if (gitRes && !gitRes.success) {
@@ -487,9 +297,6 @@ export default {
         return jsonResponse({ success: true, message: msg });
       }
       else if (action === "sync_gift_code") {
-        await cache.delete(new Request(`${url.origin}/json/giftcode.json`, { method: "GET" }));
-        await cache.delete(new Request(`${url.origin}/giftcode.json`, { method: "GET" }));
-
         const gitRes = await syncGiftCodeToGitHub(env);
         if (gitRes && gitRes.success) {
           return jsonResponse({ success: true, message: "Đã lưu json/giftcode.json lên GitHub thành công!" });
@@ -522,8 +329,6 @@ export default {
         await env.DB.prepare(`DELETE FROM licenses WHERE id IN (${placeholders})`).bind(...ids).run();
 
         for (const p of affectedPrefixes) {
-          await cache.delete(new Request(`${url.origin}/json/${p}.json`, { method: "GET" }));
-          await cache.delete(new Request(`${url.origin}/${p}.json`, { method: "GET" }));
           await syncShardToGitHub(env, p);
         }
 
@@ -569,8 +374,6 @@ export default {
         }
 
         for (const p of affectedPrefixes) {
-          await cache.delete(new Request(`${url.origin}/json/${p}.json`, { method: "GET" }));
-          await cache.delete(new Request(`${url.origin}/${p}.json`, { method: "GET" }));
           await syncShardToGitHub(env, p);
         }
 
@@ -630,8 +433,6 @@ export default {
         }
 
         for (const p of affectedPrefixes) {
-          await cache.delete(new Request(`${url.origin}/json/${p}.json`, { method: "GET" }));
-          await cache.delete(new Request(`${url.origin}/${p}.json`, { method: "GET" }));
           await syncShardToGitHub(env, p);
         }
 
@@ -651,8 +452,6 @@ export default {
         const placeholders = ids.map(() => "?").join(",");
         await env.DB.prepare(`DELETE FROM gift_keys WHERE id IN (${placeholders})`).bind(...ids).run();
 
-        await cache.delete(new Request(`${url.origin}/json/giftcode.json`, { method: "GET" }));
-        await cache.delete(new Request(`${url.origin}/giftcode.json`, { method: "GET" }));
         await syncGiftCodeToGitHub(env);
 
         return jsonResponse({ success: true, count: ids.length, message: `Đã xóa thành công ${ids.length} Gift Code!` });
@@ -677,8 +476,6 @@ export default {
             await env.DB.batch(stmts.slice(i, i + 100));
           }
         }
-        await cache.delete(new Request(`${url.origin}/json/giftcode.json`, { method: "GET" }));
-        await cache.delete(new Request(`${url.origin}/giftcode.json`, { method: "GET" }));
         await syncGiftCodeToGitHub(env);
 
         return jsonResponse({ success: true, count: stmts.length, message: `Đã cập nhật ${stmts.length} Gift Code!` });
@@ -1062,132 +859,7 @@ function xorEncryptHex(text, key) {
   return hex;
 }
 
-/**
- * Thuật toán MD5 tiêu chuẩn (RFC 1321) thuần JavaScript - xuất ra mảng Uint8Array 16 bytes
- */
-function md5(string) {
-  function md5cycle(x, k) {
-    var a = x[0], b = x[1], c = x[2], d = x[3];
-    a = ff(a, b, c, d, k[0], 7, -680876936);
-    d = ff(d, a, b, c, k[1], 12, -389564586);
-    c = ff(c, d, a, b, k[2], 17, 606105819);
-    b = ff(b, c, d, a, k[3], 22, -1044525330);
-    a = ff(a, b, c, d, k[4], 7, -176418897);
-    d = ff(d, a, b, c, k[5], 12, 1200080426);
-    c = ff(c, d, a, b, k[6], 17, -1473231341);
-    b = ff(b, c, d, a, k[7], 22, -45705983);
-    a = ff(a, b, c, d, k[8], 7, 1770035416);
-    d = ff(d, a, b, c, k[9], 12, -1958414417);
-    c = ff(c, d, a, b, k[10], 17, -42063);
-    b = ff(b, c, d, a, k[11], 22, -1990404162);
-    a = ff(a, b, c, d, k[12], 7, 1804603682);
-    d = ff(d, a, b, c, k[13], 12, -40341101);
-    c = ff(c, d, a, b, k[14], 17, -1502002290);
-    b = ff(b, c, d, a, k[15], 22, 1236535329);
-    a = gg(a, b, c, d, k[1], 5, -165796510);
-    d = gg(d, a, b, c, k[6], 9, -1069501632);
-    c = gg(c, d, a, b, k[11], 14, 643717713);
-    b = gg(b, c, d, a, k[0], 20, -373897302);
-    a = gg(a, b, c, d, k[5], 5, -701558691);
-    d = gg(d, a, b, c, k[10], 9, 38016083);
-    c = gg(c, d, a, b, k[15], 14, -660478335);
-    b = gg(b, c, d, a, k[4], 20, -405537848);
-    a = gg(a, b, c, d, k[9], 5, 568446438);
-    d = gg(d, a, b, c, k[14], 9, -1019803690);
-    c = gg(c, d, a, b, k[3], 14, -187363961);
-    b = gg(b, c, d, a, k[8], 20, 1163531501);
-    a = gg(a, b, c, d, k[13], 5, -1444681467);
-    d = gg(d, a, b, c, k[2], 9, -51403784);
-    c = gg(c, d, a, b, k[7], 14, 1735328473);
-    b = gg(b, c, d, a, k[12], 20, -1926607734);
-    a = hh(a, b, c, d, k[5], 4, -378558);
-    d = hh(d, a, b, c, k[8], 11, -2022574463);
-    c = hh(c, d, a, b, k[11], 16, 1839030562);
-    b = hh(b, c, d, a, k[14], 23, -35309556);
-    a = hh(a, b, c, d, k[1], 4, -1530992060);
-    d = hh(d, a, b, c, k[4], 11, 1272893353);
-    c = hh(c, d, a, b, k[7], 16, -155497632);
-    b = hh(b, c, d, a, k[10], 23, -1094730640);
-    a = hh(a, b, c, d, k[13], 4, 681279174);
-    d = hh(d, a, b, c, k[0], 11, -358537222);
-    c = hh(c, d, a, b, k[3], 16, -722521979);
-    b = hh(b, c, d, a, k[6], 23, 76029189);
-    a = hh(a, b, c, d, k[9], 4, -640364487);
-    d = hh(d, a, b, c, k[12], 11, -421815835);
-    c = hh(c, d, a, b, k[15], 16, 530742520);
-    b = hh(b, c, d, a, k[2], 23, -995338651);
-    a = ii(a, b, c, d, k[0], 6, -198630844);
-    d = ii(d, a, b, c, k[7], 10, 1126891415);
-    c = ii(c, d, a, b, k[14], 15, -1416354905);
-    b = ii(b, c, d, a, k[5], 21, -57434055);
-    a = ii(a, b, c, d, k[12], 6, 1700485571);
-    d = ii(d, a, b, c, k[3], 10, -1894986606);
-    c = ii(c, d, a, b, k[10], 15, -1051523);
-    b = ii(b, c, d, a, k[1], 21, -2054922799);
-    a = ii(a, b, c, d, k[8], 6, 1873313359);
-    d = ii(d, a, b, c, k[15], 10, -30611744);
-    c = ii(c, d, a, b, k[6], 15, -1560198380);
-    b = ii(b, c, d, a, k[13], 21, 1309151649);
-    a = ii(a, b, c, d, k[4], 6, -145523070);
-    d = ii(d, a, b, c, k[11], 10, -1120210379);
-    c = ii(c, d, a, b, k[2], 15, 718787259);
-    b = ii(b, c, d, a, k[9], 21, -343485551);
-    x[0] = add32(a, x[0]);
-    x[1] = add32(b, x[1]);
-    x[2] = add32(c, x[2]);
-    x[3] = add32(d, x[3]);
-  }
-  function cmn(q, a, b, x, s, t) {
-    a = add32(add32(a, q), add32(x, t));
-    return add32((a << s) | (a >>> (32 - s)), b);
-  }
-  function ff(a, b, c, d, x, s, t) { return cmn((b & c) | ((~b) & d), a, b, x, s, t); }
-  function gg(a, b, c, d, x, s, t) { return cmn((b & d) | (c & (~d)), a, b, x, s, t); }
-  function hh(a, b, c, d, x, s, t) { return cmn(b ^ c ^ d, a, b, x, s, t); }
-  function ii(a, b, c, d, x, s, t) { return cmn(c ^ (b | (~d)), a, b, x, s, t); }
-  function add32(a, b) { return (a + b) & 0xFFFFFFFF; }
 
-  function md51(s) {
-    var n = s.length, state = [1732584193, -271733879, -1732584194, 271733878], i;
-    for (i = 64; i <= s.length; i += 64) {
-      md5cycle(state, md5blk(s.substring(i - 64, i)));
-    }
-    s = s.substring(i - 64);
-    var tail = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-    for (i = 0; i < s.length; i++) tail[i >> 2] |= s.charCodeAt(i) << ((i % 4) << 3);
-    tail[i >> 2] |= 0x80 << ((i % 4) << 3);
-    if (i > 55) {
-      md5cycle(state, tail);
-      for (i = 0; i < 16; i++) tail[i] = 0;
-    }
-    tail[14] = n * 8;
-    md5cycle(state, tail);
-    return state;
-  }
-
-  function md5blk(s) {
-    var md5blks = [], i;
-    for (i = 0; i < 64; i += 4) {
-      md5blks[i >> 2] = s.charCodeAt(i)
-        + (s.charCodeAt(i + 1) << 8)
-        + (s.charCodeAt(i + 2) << 16)
-        + (s.charCodeAt(i + 3) << 24);
-    }
-    return md5blks;
-  }
-
-  function rawBytes(words) {
-    var bytes = [];
-    for (var i = 0; i < words.length; i++) {
-      for (var j = 0; j < 4; j++) {
-        bytes.push((words[i] >>> (j * 8)) & 0xFF);
-      }
-    }
-    return new Uint8Array(bytes);
-  }
-
-  return rawBytes(md51(string));
-}
 
 async function sendMailAndUpdateStatus(env, device) {
   if (!env.GAS_WEBAPP_URL) return;
@@ -1342,12 +1014,6 @@ function renderAdminHTML() {
     .brand {
       padding: 18px 20px; font-size: 16px; font-weight: 700; border-bottom: 1px solid var(--sidebar-border);
       color: var(--text-main); display: flex; justify-content: space-between; align-items: center;
-    }
-    .brand-content { display: flex; align-items: center; gap: 8px; }
-    .verified-badge {
-      display: inline-flex; align-items: center; justify-content: center;
-      width: 17px; height: 17px; background: #0284c7; color: #ffffff;
-      border-radius: 50%; font-size: 10px; font-weight: bold;
     }
     .nav-list { list-style: none; padding: 12px 8px; flex: 1; }
     .nav-item {
@@ -1668,7 +1334,7 @@ function renderAdminHTML() {
       .sidebar.open { transform: translateX(0); }
       .sidebar-backdrop.open { display: block; }
       .menu-toggle-btn { display: inline-block; }
-      .brand span:last-child { display: inline-block !important; }
+      #closeSidebarBtn { display: inline-block !important; }
       
       .topbar { padding: 10px 12px; gap: 8px; }
       .topbar-left { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
@@ -1763,10 +1429,7 @@ function renderAdminHTML() {
 
   <div class="sidebar" id="sidebar">
     <div class="brand">
-      <div class="brand-content">
-        <span>MRD Team</span>
-        <span class="verified-badge" title="Đã xác minh">✓</span>
-      </div>
+      <span>MRD_Team™</span>
       <span style="font-size: 14px; cursor: pointer; color: var(--text-muted); display: none;" id="closeSidebarBtn" onclick="toggleSidebar(false)">✕</span>
     </div>
     <ul class="nav-list">
