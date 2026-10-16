@@ -94,10 +94,11 @@ export default {
         }
       }
 
-      // Định dạng dữ liệu: SERIAL:ROM_VERSION:KEY_STATUS mã hóa XOR khóa 1012 -> Hex
+      // Định dạng dữ liệu: SERIAL:ROM_VERSION:KEY_STATUS mã hóa XOR khóa env.XOR_KEY -> Hex
+      const xorKey = env?.XOR_KEY;
       const encryptedList = records.map(r => {
         const raw = `${r.serial}:${r.rom_version}:${r.key_status}`;
-        return xorEncryptHex(raw, "1012");
+        return xorEncryptHex(raw, xorKey);
       });
 
       const response = new Response(JSON.stringify(encryptedList), {
@@ -366,7 +367,7 @@ export default {
             headers: { "Content-Type": "application/json" },
             redirect: "follow",
             body: JSON.stringify({
-              secret: env.INTERNAL_SECRET || "matkhaucuatoi",
+              secret: env.INTERNAL_SECRET,
               email: item.email_phone,
               serial: item.serial,
               rom_version: item.rom_version,
@@ -450,10 +451,11 @@ async function syncShardToGitHub(env, prefix) {
 
     const records = results || [];
 
-    // Format: SERIAL:ROM_VERSION:KEY_STATUS -> XOR encrypt với khóa "1012" -> Hex
+    // Format: SERIAL:ROM_VERSION:KEY_STATUS -> XOR encrypt với khóa env.XOR_KEY (mặc định "1012") -> Hex
+    const xorKey = env?.XOR_KEY || "1012";
     const encryptedList = records.map(r => {
       const raw = `${r.serial}:${r.rom_version}:${r.key_status}`;
-      return xorEncryptHex(raw, "1012");
+      return xorEncryptHex(raw, xorKey);
     });
 
     const fileContent = JSON.stringify(encryptedList, null, 2);
@@ -508,7 +510,7 @@ async function syncShardToGitHub(env, prefix) {
       try {
         const errJson = JSON.parse(errText);
         if (errJson.message) errMsg = errJson.message;
-      } catch (_) {}
+      } catch (_) { }
       console.error(`Lỗi đẩy file ${filePath} lên GitHub:`, errMsg);
       return { success: false, error: `GitHub API HTTP ${putRes.status}: ${errMsg}` };
     }
@@ -521,28 +523,22 @@ async function syncShardToGitHub(env, prefix) {
 }
 
 /**
- * Thuật toán băm phân mảnh:
- * HW_HASH=$(md5sum $SERI | xxd -r -p | base64)
- * PREFIX=$(echo "$HW_HASH" | cut -c 1-3 | tr '[:upper:]' '[:lower:]')
+ * Thuật toán phân mảnh theo 2 ký tự đầu của Serial:
+ * PREFIX=$(echo "$SERI" | cut -c 1-2 | tr '[:upper:]' '[:lower:]')
  */
 function getDevicePrefix(serial) {
-  if (!serial) return "unk";
-  const rawBytes = md5(String(serial).trim());
-  let binary = "";
-  for (let i = 0; i < rawBytes.length; i++) {
-    binary += String.fromCharCode(rawBytes[i]);
-  }
-  const b64 = btoa(binary);
-  return b64.substring(0, 3).toLowerCase();
+  if (!serial) return "un";
+  const clean = String(serial).trim().replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
+  return clean.length >= 2 ? clean.substring(0, 2) : clean.padEnd(2, "0");
 }
 
 /**
- * Mã hóa chuỗi text bằng XOR với khóa lặp tuần hoàn (mặc định "1012"), xuất ra Hex
+ * Mã hóa chuỗi text bằng XOR với khóa lặp tuần hoàn (mặc định env.XOR_KEY hoặc "1012"), xuất ra Hex
  */
 function xorEncryptHex(text, key = "1012") {
   const encoder = new TextEncoder();
   const textBytes = encoder.encode(text);
-  const keyBytes = encoder.encode(key);
+  const keyBytes = encoder.encode(String(key || "1012"));
   let hex = "";
   for (let i = 0; i < textBytes.length; i++) {
     const b = textBytes[i] ^ keyBytes[i % keyBytes.length];
