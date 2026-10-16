@@ -225,7 +225,7 @@ export default {
 
       // Truy vấn đồng thời dữ liệu bản quyền, ROM, request quota và Gift keys
       const [licensesRes, romsRes, statsRes, giftKeysRes] = await Promise.all([
-        env.DB.prepare("SELECT * FROM licenses ORDER BY stt DESC").all(),
+        env.DB.prepare("SELECT * FROM licenses ORDER BY id DESC").all(),
         env.DB.prepare("SELECT * FROM rom_categories ORDER BY name ASC").all(),
         env.DB.prepare("SELECT req_count FROM system_stats WHERE date_key = ? AND service_type = 'LICENSE'").bind(today).first(),
         env.DB.prepare("SELECT * FROM gift_keys ORDER BY created_at DESC").all()
@@ -260,13 +260,13 @@ export default {
         const { serial, rom_version, key_status, email_phone, country, note } = body;
 
         const existing = await env.DB.prepare(
-          "SELECT stt FROM licenses WHERE serial = ? AND rom_version = ?"
+          "SELECT id FROM licenses WHERE serial = ? AND rom_version = ?"
         ).bind(serial, rom_version).first();
 
         if (existing) {
           return jsonResponse({
             success: false,
-            error: `Thiết bị có Serial "${serial}" và ROM "${rom_version}" đã tồn tại trong hệ thống (STT: ${existing.stt})!`
+            error: `Thiết bị có Serial "${serial}" và Sản phẩm "${rom_version}" đã tồn tại trong hệ thống!`
           }, 400);
         }
 
@@ -294,28 +294,28 @@ export default {
         return jsonResponse({ success: true, message: msg, prefix });
       }
       else if (action === "update_license") {
-        const { stt, serial, rom_version, key_status, email_phone, country, note } = body;
+        const { id, serial, rom_version, key_status, email_phone, country, note } = body;
 
         const duplicate = await env.DB.prepare(
-          "SELECT stt FROM licenses WHERE serial = ? AND rom_version = ? AND stt != ?"
-        ).bind(serial, rom_version, stt).first();
+          "SELECT id FROM licenses WHERE serial = ? AND rom_version = ? AND id != ?"
+        ).bind(serial, rom_version, id).first();
 
         if (duplicate) {
           return jsonResponse({
             success: false,
-            error: `Không thể lưu! Serial "${serial}" và ROM "${rom_version}" đã thuộc về mục khác (STT: ${duplicate.stt}).`
+            error: `Không thể lưu! Serial "${serial}" và Sản phẩm "${rom_version}" đã thuộc về mục khác.`
           }, 400);
         }
 
         await ensureDbSchema(env);
-        const oldItem = await env.DB.prepare("SELECT serial, prefix FROM licenses WHERE stt = ?").bind(stt).first();
+        const oldItem = await env.DB.prepare("SELECT serial, prefix FROM licenses WHERE id = ?").bind(id).first();
         const oldPrefix = oldItem?.prefix || (oldItem ? getDevicePrefix(oldItem.serial) : null);
         const newPrefix = getDevicePrefix(serial);
 
         await env.DB.prepare(
           `UPDATE licenses SET serial = ?, rom_version = ?, key_status = ?, email_phone = ?, country = ?, note = ?, prefix = ?
-           WHERE stt = ?`
-        ).bind(serial, rom_version, key_status, email_phone || '', country, note || '', newPrefix, stt).run();
+           WHERE id = ?`
+        ).bind(serial, rom_version, key_status, email_phone || '', country, note || '', newPrefix, id).run();
 
         await cache.delete(cacheKey);
 
@@ -340,10 +340,10 @@ export default {
         return jsonResponse({ success: true, message: `Đã cập nhật thành công!${gitNotice}`, prefix: newPrefix });
       }
       else if (action === "delete_license") {
-        const oldItem = await env.DB.prepare("SELECT serial, prefix FROM licenses WHERE stt = ?").bind(body.stt).first();
+        const oldItem = await env.DB.prepare("SELECT serial, prefix FROM licenses WHERE id = ?").bind(body.id).first();
         const prefix = oldItem?.prefix || (oldItem ? getDevicePrefix(oldItem.serial) : null);
 
-        await env.DB.prepare("DELETE FROM licenses WHERE stt = ?").bind(body.stt).run();
+        await env.DB.prepare("DELETE FROM licenses WHERE id = ?").bind(body.id).run();
         await cache.delete(cacheKey);
 
         let gitNotice = "";
@@ -359,12 +359,12 @@ export default {
       }
       else if (action === "reindex_all_prefixes") {
         await ensureDbSchema(env);
-        const { results } = await env.DB.prepare("SELECT stt, serial FROM licenses").all();
+        const { results } = await env.DB.prepare("SELECT id, serial FROM licenses").all();
         let count = 0;
         const purgedPrefixes = new Set();
         for (const row of (results || [])) {
           const p = getDevicePrefix(row.serial);
-          await env.DB.prepare("UPDATE licenses SET prefix = ? WHERE stt = ?").bind(p, row.stt).run();
+          await env.DB.prepare("UPDATE licenses SET prefix = ? WHERE id = ?").bind(p, row.id).run();
           count++;
           purgedPrefixes.add(p);
           await cache.delete(new Request(`${url.origin}/json/${p}.json`, { method: "GET" }));
@@ -483,14 +483,14 @@ export default {
       }
       else if (action === "add_rom") {
         const { name } = body;
-        if (!name) return jsonResponse({ error: "Tên ROM không được để trống" }, 400);
+        if (!name) return jsonResponse({ error: "Tên Sản phẩm không được để trống" }, 400);
         await env.DB.prepare("INSERT OR IGNORE INTO rom_categories (name) VALUES (?)").bind(name.trim()).run();
       }
       else if (action === "delete_rom") {
         await env.DB.prepare("DELETE FROM rom_categories WHERE name = ?").bind(body.name).run();
       }
       else if (action === "resend_mail") {
-        const item = await env.DB.prepare("SELECT * FROM licenses WHERE stt = ?").bind(body.stt).first();
+        const item = await env.DB.prepare("SELECT * FROM licenses WHERE id = ?").bind(body.id).first();
         if (!item || !item.email_phone || !item.email_phone.includes("@")) {
           return jsonResponse({ success: false, error: "Email không hợp lệ" }, 400);
         }
@@ -518,14 +518,14 @@ export default {
           try { gasJson = JSON.parse(gasText); } catch (err) { }
 
           if (gasJson.success) {
-            await env.DB.prepare("UPDATE licenses SET gmail_notify = 'SENT' WHERE stt = ?").bind(item.stt).run();
+            await env.DB.prepare("UPDATE licenses SET gmail_notify = 'SENT' WHERE id = ?").bind(item.id).run();
             return jsonResponse({ success: true, ref_id: gasJson.ref_id });
           } else {
-            await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE stt = ?").bind(item.stt).run();
+            await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(item.id).run();
             return jsonResponse({ success: false, error: gasJson.error || gasText });
           }
         } catch (callErr) {
-          await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE stt = ?").bind(item.stt).run();
+          await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(item.id).run();
           return jsonResponse({ success: false, error: "Không kết nối được tới Google Apps Script: " + callErr.message }, 500);
         }
       }
@@ -549,16 +549,28 @@ export default {
 let schemaChecked = false;
 async function ensureDbSchema(env) {
   if (schemaChecked || !env?.DB) return;
+
   try {
-    await env.DB.prepare("ALTER TABLE licenses ADD COLUMN prefix TEXT").run();
-  } catch (e) {
-    // Cột đã tồn tại, bỏ qua lỗi
-  }
-  try {
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS licenses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        serial TEXT NOT NULL,
+        rom_version TEXT NOT NULL,
+        key_status TEXT DEFAULT 'OK',
+        email_phone TEXT,
+        country TEXT DEFAULT 'VN',
+        gmail_notify TEXT DEFAULT 'NONE',
+        note TEXT,
+        created_at INTEGER,
+        prefix TEXT
+      )
+    `).run();
     await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_licenses_prefix ON licenses(prefix)").run();
+    await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_licenses_serial_rom ON licenses(serial, rom_version)").run();
   } catch (e) {
-    // Bỏ qua lỗi index
+    // Bỏ qua lỗi tạo bảng licenses
   }
+
   try {
     await env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS gift_keys (
@@ -574,6 +586,30 @@ async function ensureDbSchema(env) {
   } catch (e) {
     // Bỏ qua lỗi tạo bảng gift_keys
   }
+
+  try {
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS rom_categories (
+        name TEXT PRIMARY KEY
+      )
+    `).run();
+  } catch (e) {
+    // Bỏ qua lỗi tạo bảng rom_categories
+  }
+
+  try {
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS system_stats (
+        date_key TEXT,
+        service_type TEXT,
+        req_count INTEGER DEFAULT 0,
+        PRIMARY KEY (date_key, service_type)
+      )
+    `).run();
+  } catch (e) {
+    // Bỏ qua lỗi tạo bảng system_stats
+  }
+
   schemaChecked = true;
 }
 
@@ -944,12 +980,12 @@ async function sendMailAndUpdateStatus(env, device) {
     try { resJson = JSON.parse(resText); } catch (e) { }
 
     if (resJson.success || resText.includes("OK")) {
-      await env.DB.prepare("UPDATE licenses SET gmail_notify = 'SENT' WHERE stt = ?").bind(device.stt).run();
+      await env.DB.prepare("UPDATE licenses SET gmail_notify = 'SENT' WHERE id = ?").bind(device.id).run();
     } else {
-      await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE stt = ?").bind(device.stt).run();
+      await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(device.id).run();
     }
   } catch (err) {
-    await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE stt = ?").bind(device.stt).run();
+    await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(device.id).run();
   }
 }
 
@@ -969,81 +1005,141 @@ function renderAdminHTML() {
   <title>MRD Team - Quản Lý Bản Quyền</title>
   <style>
     :root[data-theme="light"] {
-      --bg-body: #f1f5f9;
+      --bg-body: #f8fafc;
       --bg-card: #ffffff;
       --text-main: #0f172a;
       --text-muted: #64748b;
       --border-color: #e2e8f0;
       --table-header: #f8fafc;
       --table-hover: #f1f5f9;
-      --sidebar-bg: #0f172a;
-      --sidebar-text: #94a3b8;
-      --sidebar-active: #1e293b;
-      --modal-overlay: rgba(15, 23, 42, 0.7);
+      --sidebar-bg: #ffffff;
+      --sidebar-border: #e2e8f0;
+      --sidebar-text: #475569;
+      --sidebar-hover: #f1f5f9;
+      --sidebar-active: #f1f5f9;
+      --sidebar-active-text: #0f172a;
+      --quota-bg: #f8fafc;
+      --quota-border: #e2e8f0;
+      --modal-overlay: rgba(15, 23, 42, 0.45);
+      --dropdown-bg: #ffffff;
+      --dropdown-hover: #f1f5f9;
+      --dropdown-border: #e2e8f0;
+      --dropdown-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+      --input-bg: #ffffff;
+      --input-border: #cbd5e1;
+      --badge-ok-bg: #dcfce7;
+      --badge-ok-color: #15803d;
+      --badge-ok-border: #bbf7d0;
+      --badge-off-bg: #fef3c7;
+      --badge-off-color: #b45309;
+      --badge-off-border: #fde68a;
+      --badge-del-bg: #fee2e2;
+      --badge-del-color: #b91c1c;
+      --badge-del-border: #fecaca;
+      --badge-shard-bg: #eff6ff;
+      --badge-shard-color: #2563eb;
+      --badge-shard-border: #bfdbfe;
     }
 
     :root[data-theme="dark"] {
-      --bg-body: #0b0f19;
-      --bg-card: #151c2c;
-      --text-main: #f8fafc;
-      --text-muted: #94a3b8;
-      --border-color: #26334d;
-      --table-header: #1a2337;
-      --table-hover: #1e293b;
-      --sidebar-bg: #070a12;
-      --sidebar-text: #64748b;
-      --sidebar-active: #151c2c;
-      --modal-overlay: rgba(0, 0, 0, 0.85);
+      --bg-body: #18181b;
+      --bg-card: #222225;
+      --text-main: #f4f4f5;
+      --text-muted: #a1a1aa;
+      --border-color: #2e2e33;
+      --table-header: #1c1c1f;
+      --table-hover: #28282d;
+      --sidebar-bg: #18181b;
+      --sidebar-border: #27272a;
+      --sidebar-text: #a1a1aa;
+      --sidebar-hover: #27272a;
+      --sidebar-active: #27272a;
+      --sidebar-active-text: #ffffff;
+      --quota-bg: #1e1e22;
+      --quota-border: #2e2e33;
+      --modal-overlay: rgba(0, 0, 0, 0.75);
+      --dropdown-bg: #222225;
+      --dropdown-hover: #2b2b30;
+      --dropdown-border: #333338;
+      --dropdown-shadow: 0 14px 28px -4px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.3);
+      --input-bg: #1c1c1f;
+      --input-border: #333338;
+      --badge-ok-bg: rgba(16, 185, 129, 0.15);
+      --badge-ok-color: #34d399;
+      --badge-ok-border: rgba(16, 185, 129, 0.3);
+      --badge-off-bg: rgba(245, 158, 11, 0.15);
+      --badge-off-color: #fbbf24;
+      --badge-off-border: rgba(245, 158, 11, 0.3);
+      --badge-del-bg: rgba(239, 68, 68, 0.15);
+      --badge-del-color: #f87171;
+      --badge-del-border: rgba(239, 68, 68, 0.3);
+      --badge-shard-bg: rgba(56, 189, 248, 0.12);
+      --badge-shard-color: #38bdf8;
+      --badge-shard-border: rgba(56, 189, 248, 0.28);
     }
 
-    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 0; }
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 0; padding: 0; }
     body { background: var(--bg-body); color: var(--text-main); display: flex; height: 100vh; overflow: hidden; transition: background 0.25s, color 0.25s; }
 
     #authOverlay {
       position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-      background: rgba(10, 15, 26, 0.96); backdrop-filter: blur(8px);
+      background: var(--modal-overlay); backdrop-filter: blur(8px);
       display: flex; align-items: center; justify-content: center; z-index: 9999; padding: 20px;
     }
     .auth-card {
-      background: var(--bg-card); padding: 30px; border-radius: 12px; width: 100%; max-width: 380px;
-      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); text-align: center; border: 1px solid var(--border-color);
+      background: var(--bg-card); padding: 32px 28px; border-radius: 14px; width: 100%; max-width: 380px;
+      box-shadow: var(--dropdown-shadow); text-align: center; border: 1px solid var(--border-color);
     }
-    .auth-card h3 { margin-bottom: 8px; color: var(--text-main); font-size: 20px; }
+    .auth-card h3 { margin-bottom: 8px; color: var(--text-main); font-size: 20px; font-weight: 700; }
     .auth-card p { color: var(--text-muted); font-size: 13px; margin-bottom: 20px; }
     .auth-card input {
-      width: 100%; padding: 12px; border: 1px solid var(--border-color); border-radius: 6px;
-      background: var(--bg-body); color: var(--text-main); font-size: 15px; margin-bottom: 16px; outline: none;
+      width: 100%; padding: 12px 14px; border: 1px solid var(--input-border); border-radius: 8px;
+      background: var(--input-bg); color: var(--text-main); font-size: 15px; margin-bottom: 16px; outline: none; transition: border-color 0.2s;
     }
+    .auth-card input:focus { border-color: #0284c7; }
     .auth-card button {
-      width: 100%; padding: 12px; background: #2563eb; color: #fff; font-weight: bold;
-      border: none; border-radius: 6px; cursor: pointer; font-size: 15px;
+      width: 100%; padding: 12px; background: #0284c7; color: #fff; font-weight: 600;
+      border: none; border-radius: 8px; cursor: pointer; font-size: 15px; transition: opacity 0.2s;
     }
+    .auth-card button:hover { opacity: 0.9; }
 
     .sidebar {
-      width: 250px; background: var(--sidebar-bg); color: #fff; display: flex; flex-direction: column;
-      flex-shrink: 0; z-index: 50; transition: transform 0.3s ease;
+      width: 250px; background: var(--sidebar-bg); border-right: 1px solid var(--sidebar-border);
+      color: var(--sidebar-text); display: flex; flex-direction: column;
+      flex-shrink: 0; z-index: 50; transition: transform 0.3s ease, background 0.25s;
     }
-    .brand { padding: 20px; font-size: 18px; font-weight: bold; border-bottom: 1px solid var(--border-color); color: #38bdf8; display: flex; justify-content: space-between; align-items: center; }
-    .nav-list { list-style: none; padding: 15px 0; flex: 1; }
+    .brand {
+      padding: 18px 20px; font-size: 16px; font-weight: 700; border-bottom: 1px solid var(--sidebar-border);
+      color: var(--text-main); display: flex; justify-content: space-between; align-items: center;
+    }
+    .brand-content { display: flex; align-items: center; gap: 8px; }
+    .verified-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 17px; height: 17px; background: #0284c7; color: #ffffff;
+      border-radius: 50%; font-size: 10px; font-weight: bold;
+    }
+    .nav-list { list-style: none; padding: 12px 8px; flex: 1; }
     .nav-item {
-      padding: 14px 20px; cursor: pointer; font-size: 14px; font-weight: 500;
-      color: var(--sidebar-text); display: flex; align-items: center; gap: 10px; transition: 0.2s;
+      padding: 10px 14px; margin: 3px 4px; border-radius: 8px; cursor: pointer; font-size: 13.5px; font-weight: 500;
+      color: var(--sidebar-text); display: flex; align-items: center; gap: 10px; transition: all 0.15s ease;
     }
-    .nav-item:hover, .nav-item.active { background: var(--sidebar-active); color: #fff; border-left: 4px solid #38bdf8; }
-    .sidebar-footer { padding: 15px 16px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border-color); }
-    .btn-logout { background: none; border: none; color: #ef4444; font-size: 13px; font-weight: 600; cursor: pointer; text-align: left; padding: 4px 0; }
+    .nav-item:hover { background: var(--sidebar-hover); color: var(--text-main); }
+    .nav-item.active { background: var(--sidebar-active); color: var(--sidebar-active-text); font-weight: 600; }
+    .sidebar-footer { padding: 15px 16px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--sidebar-border); }
+    .btn-logout { background: none; border: none; color: #ef4444; font-size: 13px; font-weight: 600; cursor: pointer; text-align: left; padding: 6px 8px; border-radius: 6px; transition: background 0.15s; }
+    .btn-logout:hover { background: var(--sidebar-hover); }
 
     /* KHỐI HIỂN THỊ QUOTA BẢN QUYỀN */
     .quota-box {
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: var(--quota-bg);
+      border: 1px solid var(--quota-border);
       border-radius: 8px;
       padding: 10px 12px;
       margin-bottom: 6px;
     }
     .quota-title {
       font-size: 11px;
-      color: #94a3b8;
+      color: var(--text-muted);
       font-weight: 600;
       display: flex;
       justify-content: space-between;
@@ -1052,15 +1148,18 @@ function renderAdminHTML() {
     .quota-number {
       font-size: 13px;
       font-weight: bold;
+      color: #0284c7;
+    }
+    [data-theme="dark"] .quota-number {
       color: #38bdf8;
     }
     .quota-sub {
       font-size: 11px;
-      color: #64748b;
+      color: var(--text-muted);
       margin-top: 2px;
     }
     .quota-bar-bg {
-      background: rgba(255, 255, 255, 0.12);
+      background: var(--border-color);
       border-radius: 4px;
       height: 5px;
       width: 100%;
@@ -1069,9 +1168,12 @@ function renderAdminHTML() {
     }
     .quota-bar-fill {
       height: 100%;
-      background: #38bdf8;
+      background: #0284c7;
       border-radius: 4px;
       transition: width 0.3s;
+    }
+    [data-theme="dark"] .quota-bar-fill {
+      background: #38bdf8;
     }
 
     .content-area { 
@@ -1079,50 +1181,79 @@ function renderAdminHTML() {
       overflow-y: auto; overflow-x: hidden; min-width: 0; width: 100%; 
     }
     .topbar {
-      background: var(--bg-card); padding: 14px 20px; border-bottom: 1px solid var(--border-color);
+      background: var(--bg-card); padding: 12px 20px; border-bottom: 1px solid var(--border-color);
       display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;
     }
     .topbar-left { display: flex; align-items: center; gap: 12px; }
     .menu-toggle-btn { display: none; background: none; border: none; font-size: 20px; color: var(--text-main); cursor: pointer; }
+
+    /* THEME DROPDOWN STYLES */
+    .theme-dropdown-container { position: relative; }
     .theme-toggle-btn {
-      background: var(--bg-body); border: 1px solid var(--border-color); color: var(--text-main);
-      padding: 7px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500;
+      background: var(--bg-card); border: 1px solid var(--border-color); color: var(--text-main);
+      padding: 6px 14px; border-radius: 20px; cursor: pointer; font-size: 13px; font-weight: 500;
+      display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s;
     }
+    .theme-toggle-btn:hover { background: var(--table-hover); }
+    .theme-dropdown-menu {
+      position: absolute; top: calc(100% + 6px); right: 0; min-width: 160px;
+      background: var(--dropdown-bg); border: 1px solid var(--dropdown-border);
+      border-radius: 10px; box-shadow: var(--dropdown-shadow);
+      display: none; flex-direction: column; padding: 6px 0; z-index: 100;
+      animation: menuPop 0.15s ease-out;
+    }
+    .theme-dropdown-menu.show { display: flex; }
+    @keyframes menuPop {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .theme-dropdown-header {
+      padding: 6px 14px 4px 14px; font-size: 11px; font-weight: 600;
+      color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .theme-dropdown-item {
+      padding: 8px 14px; font-size: 13px; color: var(--text-main);
+      cursor: pointer; display: flex; align-items: center; justify-content: space-between;
+      transition: background 0.15s;
+    }
+    .theme-dropdown-item:hover { background: var(--dropdown-hover); }
+    .theme-dropdown-item.active { font-weight: 600; color: #0284c7; }
+    [data-theme="dark"] .theme-dropdown-item.active { color: #38bdf8; }
 
     .tab-content { display: none; padding: 20px; width: 100%; max-width: 1400px; margin: 0 auto; }
     .tab-content.active { display: block; }
 
     .card {
-      background: var(--bg-card); border-radius: 10px; border: 1px solid var(--border-color);
-      padding: 20px; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+      background: var(--bg-card); border-radius: 12px; border: 1px solid var(--border-color);
+      padding: 22px; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04);
     }
-    .table-container { overflow-x: auto; width: 100%; border-radius: 6px; border: 1px solid var(--border-color); }
+    .table-container { overflow-x: auto; width: 100%; border-radius: 8px; border: 1px solid var(--border-color); }
     table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
     th, td { padding: 12px 14px; border-bottom: 1px solid var(--border-color); white-space: nowrap; }
     th { background: var(--table-header); color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
     tbody tr { cursor: pointer; transition: background 0.15s; }
     tbody tr:hover { background: var(--table-hover); }
 
-    .badge { padding: 3px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; display: inline-block; }
-    .badge-OK { background: #dcfce7; color: #166534; }
-    .badge-OFF { background: #fef9c3; color: #854d0e; }
-    .badge-DEL { background: #fee2e2; color: #991b1b; }
-    .badge-SENT { background: #e0f2fe; color: #0369a1; }
-    .badge-ERROR { background: #fef2f2; color: #dc2626; }
-    .badge-NONE { background: #f1f5f9; color: #64748b; }
-    .badge-shard { background: #0284c7; color: #ffffff; font-family: monospace; font-size: 11px; }
+    .badge { padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; display: inline-block; border: 1px solid transparent; }
+    .badge-OK { background: var(--badge-ok-bg); color: var(--badge-ok-color); border-color: var(--badge-ok-border); }
+    .badge-OFF { background: var(--badge-off-bg); color: var(--badge-off-color); border-color: var(--badge-off-border); }
+    .badge-DEL { background: var(--badge-del-bg); color: var(--badge-del-color); border-color: var(--badge-del-border); }
+    .badge-SENT { background: #e0f2fe; color: #0369a1; border-color: #bae6fd; }
+    .badge-ERROR { background: var(--badge-del-bg); color: var(--badge-del-color); border-color: var(--badge-del-border); }
+    .badge-NONE { background: var(--table-hover); color: var(--text-muted); border-color: var(--border-color); }
+    .badge-shard { background: var(--badge-shard-bg); color: var(--badge-shard-color); border-color: var(--badge-shard-border); font-family: monospace; font-size: 11px; }
 
     .form-group { margin-bottom: 14px; }
     .form-group label { display: block; font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; text-transform: uppercase; }
     .form-group input, .form-group select {
-      width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 6px;
-      background: var(--bg-body); color: var(--text-main); font-size: 14px; outline: none; transition: border-color 0.2s;
+      width: 100%; padding: 10px 12px; border: 1px solid var(--input-border); border-radius: 8px;
+      background: var(--input-bg); color: var(--text-main); font-size: 14px; outline: none; transition: border-color 0.2s;
     }
-    .form-group input:focus, .form-group select:focus { border-color: #2563eb; }
+    .form-group input:focus, .form-group select:focus { border-color: #0284c7; box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15); }
     .form-group input:disabled, .form-group select:disabled { opacity: 0.7; cursor: not-allowed; }
 
-    .btn { padding: 9px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px; transition: 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
-    .btn-blue { background: #2563eb; color: #fff; }
+    .btn { padding: 9px 16px; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 13px; transition: 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+    .btn-blue { background: #0284c7; color: #fff; }
     .btn-green { background: #16a34a; color: #fff; }
     .btn-red { background: #dc2626; color: #fff; }
     .btn-gray { background: #64748b; color: #fff; }
@@ -1134,12 +1265,12 @@ function renderAdminHTML() {
       display: none; align-items: center; justify-content: center; z-index: 10000; padding: 15px;
     }
     .modal-box {
-      background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px;
+      background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 14px;
       width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; padding: 24px;
-      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.4);
+      box-shadow: var(--dropdown-shadow);
     }
     .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-    .modal-header h3 { font-size: 17px; }
+    .modal-header h3 { font-size: 17px; font-weight: 700; color: var(--text-main); }
     .close-btn { font-size: 20px; cursor: pointer; color: var(--text-muted); }
     .modal-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 16px; }
 
@@ -1147,19 +1278,19 @@ function renderAdminHTML() {
     .toast-msg {
       background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color);
       padding: 12px 18px; border-radius: 8px; font-size: 13px; font-weight: 500;
-      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2); animation: slideIn 0.3s ease;
+      box-shadow: var(--dropdown-shadow); animation: slideIn 0.3s ease;
       display: flex; align-items: center; gap: 8px; max-width: 350px;
     }
     .toast-success { border-left: 4px solid #16a34a; }
     .toast-error { border-left: 4px solid #dc2626; }
     .toast-warn { border-left: 4px solid #f59e0b; }
-    .toast-info { border-left: 4px solid #2563eb; }
+    .toast-info { border-left: 4px solid #0284c7; }
     @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 
     .sidebar-backdrop { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 40; }
 
     @media (max-width: 768px) {
-      .sidebar { position: fixed; top: 0; left: 0; height: 100%; transform: translateX(-100%); }
+      .sidebar { position: fixed; top: 0; left: 0; height: 100%; transform: translateX(-100%); box-shadow: 0 0 20px rgba(0,0,0,0.3); }
       .sidebar.open { transform: translateX(0); }
       .sidebar-backdrop.open { display: block; }
       .menu-toggle-btn { display: inline-block; }
@@ -1173,15 +1304,15 @@ function renderAdminHTML() {
       display: none; align-items: center; justify-content: center; z-index: 10002; padding: 15px;
     }
     .confirm-card {
-      background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px;
-      width: 100%; max-width: 400px; padding: 24px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.4);
+      background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 14px;
+      width: 100%; max-width: 400px; padding: 24px; box-shadow: var(--dropdown-shadow);
       text-align: center; animation: scalePop 0.2s ease;
     }
     @keyframes scalePop {
       from { transform: scale(0.92); opacity: 0; }
       to   { transform: scale(1); opacity: 1; }
     }
-    .confirm-card h4 { font-size: 18px; margin-bottom: 8px; color: var(--text-main); }
+    .confirm-card h4 { font-size: 18px; margin-bottom: 8px; color: var(--text-main); font-weight: 700; }
     .confirm-card p { font-size: 14px; color: var(--text-muted); margin-bottom: 20px; line-height: 1.5; }
     .confirm-actions { display: flex; justify-content: center; gap: 10px; }
   </style>
@@ -1202,14 +1333,17 @@ function renderAdminHTML() {
 
   <div class="sidebar" id="sidebar">
     <div class="brand">
-      <span>MRD Team</span>
-      <span style="font-size: 12px; cursor: pointer; color: #94a3b8; display: none;" id="closeSidebarBtn" onclick="toggleSidebar(false)">✕</span>
+      <div class="brand-content">
+        <span>MRD Team</span>
+        <span class="verified-badge" title="Đã xác minh">✓</span>
+      </div>
+      <span style="font-size: 14px; cursor: pointer; color: var(--text-muted); display: none;" id="closeSidebarBtn" onclick="toggleSidebar(false)">✕</span>
     </div>
     <ul class="nav-list">
       <li class="nav-item active" onclick="switchTab('listTab', this)">📋 Danh sách</li>
-      <li class="nav-item" onclick="switchTab('createTab', this)">➕ Tạo mới</li>
-      <li class="nav-item" onclick="switchTab('romTab', this)">📁 Danh mục ROM</li>
-      <li class="nav-item" onclick="switchTab('giftTab', this)">🎁 Quản lý Gift Code</li>
+      <li class="nav-item" onclick="switchTab('createTab', this)">➕ Tạo KEY mới</li>
+      <li class="nav-item" onclick="switchTab('giftTab', this)">🎁 Gift Code</li>
+      <li class="nav-item" onclick="switchTab('romTab', this)">📁 Danh mục Sản phẩm</li>
     </ul>
     
     <div class="sidebar-footer">
@@ -1250,7 +1384,27 @@ function renderAdminHTML() {
         <div style="font-size: 17px; font-weight: bold;" id="topbarTitle">Danh sách Bản quyền</div>
         <button class="btn btn-blue" style="margin-left: 8px; padding: 6px 12px; font-size: 12px;" onclick="handleSyncAllPrefixes()" title="Tính toán lại Prefix và đồng bộ cache phân mảnh">🔄 Đồng bộ Shards</button>
       </div>
-      <button class="theme-toggle-btn" id="themeBtn" onclick="toggleTheme()">🌙 Giao diện</button>
+      <div class="theme-dropdown-container">
+        <button class="theme-toggle-btn" id="themeBtn" onclick="toggleThemeDropdown(event)" title="Chọn giao diện">
+          <span id="themeBtnIcon">🌙</span>
+          <span id="themeBtnText">Giao diện</span>
+        </button>
+        <div class="theme-dropdown-menu" id="themeDropdownMenu">
+          <div class="theme-dropdown-header">Giao diện</div>
+          <div class="theme-dropdown-item" id="themeOpt-light" onclick="setThemeMode('light')">
+            <span>☀️ Sáng</span>
+            <span class="theme-check"></span>
+          </div>
+          <div class="theme-dropdown-item" id="themeOpt-dark" onclick="setThemeMode('dark')">
+            <span>🌙 Tối</span>
+            <span class="theme-check"></span>
+          </div>
+          <div class="theme-dropdown-item" id="themeOpt-system" onclick="setThemeMode('system')">
+            <span>💻 Hệ thống</span>
+            <span class="theme-check"></span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- TAB 1: DANH SÁCH -->
@@ -1317,20 +1471,20 @@ function renderAdminHTML() {
       </div>
     </div>
 
-    <!-- TAB 3: DANH MỤC ROM -->
+    <!-- TAB 3: DANH MỤC SẢN PHẨM -->
     <div id="romTab" class="tab-content">
       <div class="card" style="max-width: 600px; margin: 0 auto 20px auto;">
-        <h4 style="margin-bottom: 12px;">Thêm Danh mục ROM</h4>
+        <h4 style="margin-bottom: 12px;">Thêm Sản phẩm</h4>
         <div style="display: flex; gap: 8px;">
-          <input type="text" id="newRomName" placeholder="Tên bản ROM mới..." style="flex: 1; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-body); color: var(--text-main);">
+          <input type="text" id="newRomName" placeholder="Tên Sản phẩm mới..." style="flex: 1; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-body); color: var(--text-main);">
           <button class="btn btn-blue" onclick="handleAddRom()">+ Thêm</button>
         </div>
       </div>
       <div class="card" style="max-width: 600px; margin: auto;">
-        <h4 style="margin-bottom: 12px;">Danh sách ROM hiện tại</h4>
+        <h4 style="margin-bottom: 12px;">Danh sách Sản phẩm hiện tại</h4>
         <div class="table-container">
           <table>
-            <thead><tr><th>Tên ROM</th><th style="width: 80px;">Xóa</th></tr></thead>
+            <thead><tr><th>Tên Sản phẩm</th><th style="width: 80px;">Hành động</th></tr></thead>
             <tbody id="romTableBody"></tbody>
           </table>
         </div>
@@ -1363,9 +1517,9 @@ function renderAdminHTML() {
                 <th>GIFT_CODE</th>
                 <th>START_DATE</th>
                 <th>EXPIRATION_DATE</th>
-                <th>TRẠNG THÁI</th>
+                <th>KEY_STATUS</th>
                 <th>NOTE</th>
-                <th style="width: 140px; text-align: center;">THAO TÁC</th>
+                <th style="width: 140px; text-align: center;">ACTIONS</th>
               </tr>
             </thead>
             <tbody id="giftTableBody">
@@ -1421,7 +1575,7 @@ function renderAdminHTML() {
         <span class="close-btn" onclick="closeModal()">&times;</span>
       </div>
       
-      <input type="hidden" id="editStt">
+      <input type="hidden" id="editId">
       <div class="form-group">
         <label>SHARD TĨNH (PREFIX)</label>
         <div style="display: flex; gap: 10px; align-items: center;">
@@ -1521,24 +1675,63 @@ function renderAdminHTML() {
       });
     }
 
-    function initTheme() {
-      const savedTheme = localStorage.getItem("mrd_theme") || "light";
-      document.documentElement.setAttribute("data-theme", savedTheme);
-      updateThemeButton(savedTheme);
+    let currentThemeMode = localStorage.getItem("mrd_theme_mode") || "system";
+
+    function applyResolvedTheme() {
+      let resolvedTheme = currentThemeMode;
+      if (currentThemeMode === "system") {
+        resolvedTheme = (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", resolvedTheme);
+
+      const iconEl = document.getElementById("themeBtnIcon");
+      if (iconEl) iconEl.innerText = resolvedTheme === "dark" ? "🌙" : "☀️";
+
+      ["light", "dark", "system"].forEach(function(m) {
+        const item = document.getElementById("themeOpt-" + m);
+        if (item) {
+          const checkEl = item.querySelector(".theme-check");
+          if (m === currentThemeMode) {
+            item.classList.add("active");
+            if (checkEl) checkEl.innerText = "✓";
+          } else {
+            item.classList.remove("active");
+            if (checkEl) checkEl.innerText = "";
+          }
+        }
+      });
     }
 
-    function toggleTheme() {
-      const currentTheme = document.documentElement.getAttribute("data-theme");
-      const nextTheme = currentTheme === "dark" ? "light" : "dark";
-      document.documentElement.setAttribute("data-theme", nextTheme);
-      localStorage.setItem("mrd_theme", nextTheme);
-      updateThemeButton(nextTheme);
+    function setThemeMode(mode) {
+      currentThemeMode = mode;
+      localStorage.setItem("mrd_theme_mode", mode);
+      applyResolvedTheme();
+      toggleThemeDropdown(null, false);
     }
 
-    function updateThemeButton(theme) {
-      document.getElementById("themeBtn").innerText = theme === "dark" ? "☀️ Sáng" : "🌙 Tối";
+    function toggleThemeDropdown(e, forceState) {
+      if (e) e.stopPropagation();
+      const menu = document.getElementById("themeDropdownMenu");
+      if (!menu) return;
+      if (forceState !== undefined) {
+        if (forceState) menu.classList.add("show");
+        else menu.classList.remove("show");
+      } else {
+        menu.classList.toggle("show");
+      }
     }
-    initTheme();
+
+    document.addEventListener("click", function() {
+      toggleThemeDropdown(null, false);
+    });
+
+    if (window.matchMedia) {
+      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function() {
+        if (currentThemeMode === "system") applyResolvedTheme();
+      });
+    }
+
+    applyResolvedTheme();
 
     function toggleSidebar(open) {
       const sidebar = document.getElementById("sidebar");
@@ -1564,8 +1757,8 @@ function renderAdminHTML() {
       const titles = {
         listTab: "Danh sách Bản quyền",
         createTab: "Tạo mới Bản quyền",
-        romTab: "Quản lý Danh mục ROM",
-        giftTab: "Quản lý Gift Code"
+        giftTab: "Quản lý Gift Code",
+        romTab: "Quản lý Sản phẩm"
       };
       document.getElementById("topbarTitle").innerText = titles[tabId];
       if (window.innerWidth <= 768) toggleSidebar(false);
@@ -1676,11 +1869,12 @@ function renderAdminHTML() {
 
     const rawDomain = systemData.pages_domain || "";
     const pagesBase = rawDomain.endsWith("/") ? rawDomain.slice(0, -1) : rawDomain;
-      tbody.innerHTML = systemData.licenses.map(item => {
+      tbody.innerHTML = systemData.licenses.map((item, index) => {
+        const stt = index + 1; // Tự động đánh số STT liên tục 1, 2, 3...
         const linkHref = pagesBase ? (pagesBase + "/json/" + item.prefix + ".json") : ("/json/" + item.prefix + ".json");
         return \`
-        <tr onclick="openDetailModal(\${item.stt})">
-          <td>\${item.stt}</td>
+        <tr onclick="openDetailModal(\${item.id})">
+          <td><b>\${stt}</b></td>
           <td>
             <a href="\${linkHref}" target="_blank" onclick="event.stopPropagation()" title="Mở file JSON phân mảnh trên Cloudflare Pages" style="text-decoration:none;">
               <span class="badge badge-shard">🚀 json/\${item.prefix}.json</span>
@@ -1707,7 +1901,7 @@ function renderAdminHTML() {
     function renderRomTable() {
       const tbody = document.getElementById("romTableBody");
       if (!systemData.rom_categories.length) {
-        tbody.innerHTML = '<tr><td colspan="2" style="color:var(--text-muted);">Chưa có danh mục ROM.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="2" style="color:var(--text-muted);">Chưa có Sản phẩm.</td></tr>';
         return;
       }
       tbody.innerHTML = systemData.rom_categories.map(r => \`
@@ -1741,8 +1935,8 @@ function renderAdminHTML() {
         const stt = index + 1; // STT được hệ thống tự động sinh theo thứ tự, không lưu cố định trong DB
         const isExpired = item.expiration_date < todayStr;
         const statusBadge = isExpired
-          ? '<span class="badge badge-OFF">Hết hạn</span>'
-          : '<span class="badge badge-OK">Còn hạn</span>';
+          ? '<span class="badge badge-OFF">BLOCK</span>'
+          : '<span class="badge badge-OK">OK</span>';
 
         return \`
           <tr>
@@ -1850,15 +2044,15 @@ function renderAdminHTML() {
       }
     }
 
-    function openDetailModal(stt) {
-      currentSelectedItem = systemData.licenses.find(i => i.stt === stt);
+    function openDetailModal(id) {
+      currentSelectedItem = systemData.licenses.find(i => i.id === id);
       if (!currentSelectedItem) return;
 
       const prefix = currentSelectedItem.prefix || "unk";
       const rawDomain = systemData.pages_domain || "";
       const pagesBase = rawDomain.endsWith("/") ? rawDomain.slice(0, -1) : rawDomain;
       const linkHref = pagesBase ? (pagesBase + "/json/" + prefix + ".json") : ("/json/" + prefix + ".json");
-      document.getElementById("editStt").value = currentSelectedItem.stt;
+      document.getElementById("editId").value = currentSelectedItem.id;
       document.getElementById("editPrefix").value = "json/" + prefix + ".json";
       document.getElementById("editPrefixLink").href = linkHref;
       document.getElementById("editSerial").value = currentSelectedItem.serial;
@@ -1899,7 +2093,7 @@ function renderAdminHTML() {
     async function handleSaveEdit() {
       const payload = {
         action: "update_license",
-        stt: parseInt(document.getElementById("editStt").value),
+        id: parseInt(document.getElementById("editId").value),
         serial: document.getElementById("editSerial").value.trim(),
         rom_version: document.getElementById("editRomSelect").value,
         key_status: document.getElementById("editStatus").value,
@@ -1926,7 +2120,7 @@ function renderAdminHTML() {
         true
       );
       if (confirmed) {
-        await sendAdminAction({ action: "delete_license", stt: currentSelectedItem.stt });
+        await sendAdminAction({ action: "delete_license", id: currentSelectedItem.id });
         closeModal();
         await loadAllData();
         showToast("Đã xóa thiết bị thành công!", "success");
@@ -1979,23 +2173,23 @@ function renderAdminHTML() {
 
     async function handleAddRom() {
       const name = document.getElementById("newRomName").value.trim();
-      if (!name) return showToast("Vui lòng nhập tên ROM!", "warn");
+      if (!name) return showToast("Vui lòng nhập tên Sản phẩm!", "warn");
       await sendAdminAction({ action: "add_rom", name });
       document.getElementById("newRomName").value = "";
       await loadAllData();
-      showToast('Đã thêm danh mục ROM "' + name + '"', "success");
+      showToast('Đã thêm Sản phẩm "' + name + '"', "success");
     }
 
     async function handleDeleteRom(name) {
       const confirmed = await showConfirm(
         "Xác nhận xóa danh mục",
-        'Bạn có chắc chắn muốn xóa ROM "' + name + '"?',
+        'Bạn có chắc chắn muốn xóa "' + name + '"?',
         true
       );
       if (confirmed) {
         await sendAdminAction({ action: "delete_rom", name });
         await loadAllData();
-        showToast('Đã xóa danh mục ROM "' + name + '"', "success");
+        showToast('Đã xóa "' + name + '"', "success");
       }
     }
 
@@ -2027,7 +2221,7 @@ function renderAdminHTML() {
       showToast("Đang kích hoạt lệnh gửi mail...", "info");
 
       try {
-        const res = await sendAdminAction({ action: "resend_mail", stt: currentSelectedItem.stt });
+        const res = await sendAdminAction({ action: "resend_mail", id: currentSelectedItem.id });
         
         if (res && res.success) {
           if (targetBtn) targetBtn.innerHTML = "✅ Đã gửi lệnh!";
