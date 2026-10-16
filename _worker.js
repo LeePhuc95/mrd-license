@@ -56,14 +56,12 @@ export default {
 
     // =========================================================================
     // 1.5. ENDPOINT ANDROID: PHÂN MẢNH SHARD STATIC JSON (PREFIX CHUNKING CÓ CDN CACHE)
-    // Hỗ trợ cả /<prefix>.json và /api/chunks/<prefix>.json
+    // Hỗ trợ cả /json/<prefix>.json, /<prefix>.json và /api/chunks/<prefix>.json
     // =========================================================================
-    const shardMatch = url.pathname.match(/^\/(?:api\/chunks\/)?([a-z0-9+/=_-]{1,10})\.json$/i);
+    const shardMatch = url.pathname.match(/^\/(?:(?:json|api\/chunks)\/)?([a-z0-9+/=_-]{1,10})\.json$/i);
     if (shardMatch && request.method === "GET") {
       const prefix = shardMatch[1].toLowerCase();
-      const chunkCacheKey = new Request(`${url.origin}/${prefix}.json`, { method: "GET" });
-
-      let cachedResponse = await cache.match(chunkCacheKey);
+      let cachedResponse = await cache.match(request);
       if (cachedResponse) {
         return cachedResponse;
       }
@@ -110,7 +108,10 @@ export default {
         }
       });
 
-      ctx.waitUntil(cache.put(chunkCacheKey, response.clone()));
+      ctx.waitUntil(Promise.all([
+        cache.put(new Request(`${url.origin}/json/${prefix}.json`, { method: "GET" }), response.clone()),
+        cache.put(new Request(`${url.origin}/${prefix}.json`, { method: "GET" }), response.clone())
+      ]));
       return response;
     }
 
@@ -235,13 +236,14 @@ export default {
         ).bind(serial, rom_version, key_status || 'OK', email_phone || '', country || 'VN', note || '', Date.now(), prefix).run();
 
         // Xóa CDN cache cục bộ cho prefix phân mảnh
+        await cache.delete(new Request(`${url.origin}/json/${prefix}.json`, { method: "GET" }));
         await cache.delete(new Request(`${url.origin}/${prefix}.json`, { method: "GET" }));
 
         // Tự động đẩy file phân mảnh lên GitHub Repo cho Cloudflare Pages
         const gitRes = await syncShardToGitHub(env, prefix);
         let msg = "Đã thêm thành công!";
         if (gitRes && gitRes.success) {
-          msg += ` (Đã lưu ${prefix}.json lên GitHub)`;
+          msg += ` (Đã lưu json/${prefix}.json lên GitHub)`;
         } else if (gitRes && !gitRes.success) {
           msg += ` (Lưu ý GitHub: ${gitRes.error})`;
         }
@@ -277,12 +279,14 @@ export default {
         // Xóa CDN cache phân mảnh cũ và mới & đồng bộ lên GitHub
         let gitNotice = "";
         if (oldPrefix) {
+          await cache.delete(new Request(`${url.origin}/json/${oldPrefix}.json`, { method: "GET" }));
           await cache.delete(new Request(`${url.origin}/${oldPrefix}.json`, { method: "GET" }));
           if (oldPrefix !== newPrefix) {
             await syncShardToGitHub(env, oldPrefix);
           }
         }
         if (newPrefix) {
+          await cache.delete(new Request(`${url.origin}/json/${newPrefix}.json`, { method: "GET" }));
           await cache.delete(new Request(`${url.origin}/${newPrefix}.json`, { method: "GET" }));
           const gitRes = await syncShardToGitHub(env, newPrefix);
           if (gitRes && !gitRes.success) {
@@ -301,6 +305,7 @@ export default {
 
         let gitNotice = "";
         if (prefix) {
+          await cache.delete(new Request(`${url.origin}/json/${prefix}.json`, { method: "GET" }));
           await cache.delete(new Request(`${url.origin}/${prefix}.json`, { method: "GET" }));
           const gitRes = await syncShardToGitHub(env, prefix);
           if (gitRes && !gitRes.success) {
@@ -319,6 +324,7 @@ export default {
           await env.DB.prepare("UPDATE licenses SET prefix = ? WHERE stt = ?").bind(p, row.stt).run();
           count++;
           purgedPrefixes.add(p);
+          await cache.delete(new Request(`${url.origin}/json/${p}.json`, { method: "GET" }));
           await cache.delete(new Request(`${url.origin}/${p}.json`, { method: "GET" }));
         }
 
@@ -327,9 +333,9 @@ export default {
         for (const p of purgedPrefixes) {
           const res = await syncShardToGitHub(env, p);
           if (res && res.success) {
-            syncMsgs.push(`${p}.json: ✅ Thành công`);
+            syncMsgs.push(`json/${p}.json: ✅ Thành công`);
           } else {
-            syncMsgs.push(`${p}.json: ❌ ${res ? res.error : 'Lỗi không xác định'}`);
+            syncMsgs.push(`json/${p}.json: ❌ ${res ? res.error : 'Lỗi không xác định'}`);
           }
         }
 
@@ -459,7 +465,7 @@ async function syncShardToGitHub(env, prefix) {
     }
     const contentBase64 = btoa(binary);
 
-    const filePath = `${prefix}.json`;
+    const filePath = `json/${prefix}.json`;
     const apiUrl = `https://api.github.com/repos/${cleanRepo}/contents/${filePath}`;
     const headers = {
       "Authorization": `Bearer ${token}`,
@@ -1348,13 +1354,13 @@ function renderAdminHTML() {
     const rawDomain = systemData.pages_domain || "";
     const pagesBase = rawDomain.endsWith("/") ? rawDomain.slice(0, -1) : rawDomain;
       tbody.innerHTML = systemData.licenses.map(item => {
-        const linkHref = pagesBase ? (pagesBase + "/" + item.prefix + ".json") : ("/" + item.prefix + ".json");
+        const linkHref = pagesBase ? (pagesBase + "/json/" + item.prefix + ".json") : ("/json/" + item.prefix + ".json");
         return \`
         <tr onclick="openDetailModal(\${item.stt})">
           <td>\${item.stt}</td>
           <td>
             <a href="\${linkHref}" target="_blank" onclick="event.stopPropagation()" title="Mở file JSON phân mảnh trên Cloudflare Pages" style="text-decoration:none;">
-              <span class="badge badge-shard">🚀 \${item.prefix}.json</span>
+              <span class="badge badge-shard">🚀 json/\${item.prefix}.json</span>
             </a>
           </td>
           <td><b><code>\${item.serial}</code></b></td>
@@ -1396,9 +1402,9 @@ function renderAdminHTML() {
       const prefix = currentSelectedItem.prefix || "unk";
       const rawDomain = systemData.pages_domain || "";
       const pagesBase = rawDomain.endsWith("/") ? rawDomain.slice(0, -1) : rawDomain;
-      const linkHref = pagesBase ? (pagesBase + "/" + prefix + ".json") : ("/" + prefix + ".json");
+      const linkHref = pagesBase ? (pagesBase + "/json/" + prefix + ".json") : ("/json/" + prefix + ".json");
       document.getElementById("editStt").value = currentSelectedItem.stt;
-      document.getElementById("editPrefix").value = prefix + ".json";
+      document.getElementById("editPrefix").value = "json/" + prefix + ".json";
       document.getElementById("editPrefixLink").href = linkHref;
       document.getElementById("editSerial").value = currentSelectedItem.serial;
       document.getElementById("editRomSelect").value = currentSelectedItem.rom_version;
@@ -1494,7 +1500,7 @@ function renderAdminHTML() {
       document.getElementById("addSerial").value = "";
       document.getElementById("addEmail").value = "";
       document.getElementById("addNote").value = "";
-      showToast(res.message || ("Đã thêm thiết bị mới thành công (Shard: " + res.prefix + ".json)!"), "success", 6000);
+      showToast(res.message || ("Đã thêm thiết bị mới thành công (Shard: json/" + res.prefix + ".json)!"), "success", 6000);
       await loadAllData();
       switchTab('listTab', document.querySelectorAll('.nav-item')[0]);
     }
