@@ -161,8 +161,11 @@ export default {
 
         const newId = insertRes.meta?.last_row_id;
 
+        const gasUrl = env.GAS_WEBAPP_URL;
+        const secret = env.INTERNAL_SECRET;
+
         // KIỂM TRA ĐIỀU KIỆN TỰ ĐỘNG GỬI EMAIL SAU 60 GIÂY
-        if (newId && env.GAS_WEBAPP_URL) {
+        if (newId) {
           const autoEmailSetting = await env.DB.prepare("SELECT req_count FROM system_stats WHERE date_key = 'SETTINGS' AND service_type = 'AUTO_SEND_EMAIL'").first();
           const isAutoEmailEnabled = autoEmailSetting ? autoEmailSetting.req_count === 1 : false;
 
@@ -180,12 +183,12 @@ export default {
                 if (!item || item.key_status !== "OK" || item.gmail_notify !== "NONE" || !item.email_phone || !item.email_phone.includes("@")) {
                   return; // Không đủ điều kiện hoặc đã bị sửa
                 }
-                const gasRes = await fetch(env.GAS_WEBAPP_URL, {
+                const gasRes = await fetch(gasUrl, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   redirect: "follow",
                   body: JSON.stringify({
-                    secret: env.INTERNAL_SECRET,
+                    secret: secret,
                     email: item.email_phone,
                     serial: item.serial,
                     rom_version: item.rom_version,
@@ -194,7 +197,7 @@ export default {
                 });
                 const gasText = await gasRes.text();
                 let gasJson = {};
-                try { gasJson = JSON.parse(gasText); } catch (_) {}
+                try { gasJson = JSON.parse(gasText); } catch (_) { }
 
                 if (gasJson.success) {
                   await env.DB.prepare("UPDATE licenses SET gmail_notify = 'SENT' WHERE id = ?").bind(newId).run();
@@ -207,7 +210,7 @@ export default {
                 try {
                   await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(newId).run();
                   await bumpDbVersion(env);
-                } catch (_) {}
+                } catch (_) { }
               }
             })());
           }
@@ -596,17 +599,16 @@ export default {
           return jsonResponse({ success: false, error: "Email không hợp lệ" }, 400);
         }
 
-        if (!env.GAS_WEBAPP_URL) {
-          return jsonResponse({ success: false, error: "Chưa cấu hình GAS_WEBAPP_URL trong Settings!" }, 500);
-        }
+        const gasUrl = env.GAS_WEBAPP_URL;
+        const secret = env.INTERNAL_SECRET;
 
         try {
-          const gasRes = await fetch(env.GAS_WEBAPP_URL, {
+          const gasRes = await fetch(gasUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             redirect: "follow",
             body: JSON.stringify({
-              secret: env.INTERNAL_SECRET,
+              secret: secret,
               email: item.email_phone,
               serial: item.serial,
               rom_version: item.rom_version,
@@ -620,13 +622,16 @@ export default {
 
           if (gasJson.success) {
             await env.DB.prepare("UPDATE licenses SET gmail_notify = 'SENT' WHERE id = ?").bind(item.id).run();
+            await bumpDbVersion(env);
             return jsonResponse({ success: true, ref_id: gasJson.ref_id });
           } else {
             await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(item.id).run();
+            await bumpDbVersion(env);
             return jsonResponse({ success: false, error: gasJson.error || gasText });
           }
         } catch (callErr) {
           await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(item.id).run();
+          await bumpDbVersion(env);
           return jsonResponse({ success: false, error: "Không kết nối được tới Google Apps Script: " + callErr.message }, 500);
         }
       }
@@ -3658,19 +3663,48 @@ function renderAdminHTML() {
           if (remaining > 0) {
             badge.innerText = "⏳ " + remaining + "s";
           } else {
-            badge.className = "badge badge-SENT";
-            badge.innerText = "SENT";
+            badge.removeAttribute("data-target-time");
+            badge.className = "badge badge-off";
+            badge.innerText = "⏳ Đang gửi mail...";
             const id = Number(badge.getAttribute("data-id"));
-            const found = (systemData.licenses || []).find(l => l.id === id);
-            if (found) found.gmail_notify = "SENT";
-            if (currentSelectedItem && currentSelectedItem.id === id) {
-              currentSelectedItem.gmail_notify = "SENT";
-              const sendBtn = document.getElementById("btnSendMail");
-              if (sendBtn) sendBtn.style.display = "none";
-            }
+            triggerAutoSendEmail(id, badge);
           }
         });
       }, 1000);
+    }
+
+    async function triggerAutoSendEmail(id, badgeEl) {
+      try {
+        const res = await sendAdminAction({ action: "resend_mail", id: id }, "Đang tự động gửi email...");
+        if (res && res.success) {
+          if (badgeEl) {
+            badgeEl.className = "badge badge-SENT";
+            badgeEl.innerText = "SENT";
+          }
+          const found = (systemData.licenses || []).find(l => l.id === id);
+          if (found) found.gmail_notify = "SENT";
+          if (currentSelectedItem && currentSelectedItem.id === id) {
+            currentSelectedItem.gmail_notify = "SENT";
+            const sendBtn = document.getElementById("btnSendMail");
+            if (sendBtn) sendBtn.style.display = "none";
+          }
+          showToast("Đã tự động gửi email thông báo kích hoạt thành công!", "success", 5000);
+        } else {
+          if (badgeEl) {
+            badgeEl.className = "badge badge-ERROR";
+            badgeEl.innerText = "ERROR";
+          }
+          const found = (systemData.licenses || []).find(l => l.id === id);
+          if (found) found.gmail_notify = "ERROR";
+          showToast("Lỗi gửi email tự động: " + ((res && res.error) || "Không gửi được"), "error", 6000);
+        }
+      } catch (err) {
+        if (badgeEl) {
+          badgeEl.className = "badge badge-ERROR";
+          badgeEl.innerText = "ERROR";
+        }
+        showToast("Lỗi kết nối khi gửi email tự động: " + err.message, "error", 6000);
+      }
     }
 
     async function toggleAutoSendEmail(enabled) {
