@@ -490,6 +490,202 @@ export default {
       else if (action === "delete_rom") {
         await env.DB.prepare("DELETE FROM rom_categories WHERE name = ?").bind(body.name).run();
       }
+      else if (action === "bulk_delete_licenses") {
+        const { ids } = body;
+        if (!Array.isArray(ids) || ids.length === 0) {
+          return jsonResponse({ success: false, error: "Danh sách ID không hợp lệ" }, 400);
+        }
+        await ensureDbSchema(env);
+        const placeholders = ids.map(() => "?").join(",");
+        const oldItems = await env.DB.prepare(`SELECT serial, prefix FROM licenses WHERE id IN (${placeholders})`).bind(...ids).all();
+        const affectedPrefixes = new Set();
+        (oldItems.results || []).forEach(row => {
+          const p = row.prefix || getDevicePrefix(row.serial);
+          if (p) affectedPrefixes.add(p);
+        });
+
+        await env.DB.prepare(`DELETE FROM licenses WHERE id IN (${placeholders})`).bind(...ids).run();
+
+        for (const p of affectedPrefixes) {
+          await cache.delete(new Request(`${url.origin}/json/${p}.json`, { method: "GET" }));
+          await cache.delete(new Request(`${url.origin}/${p}.json`, { method: "GET" }));
+          await syncShardToGitHub(env, p);
+        }
+
+        return jsonResponse({ success: true, count: ids.length, message: `Đã xóa thành công ${ids.length} mục!` });
+      }
+      else if (action === "bulk_update_licenses") {
+        const { items } = body;
+        if (!Array.isArray(items) || items.length === 0) {
+          return jsonResponse({ success: false, error: "Danh sách cập nhật không hợp lệ" }, 400);
+        }
+        await ensureDbSchema(env);
+
+        const affectedPrefixes = new Set();
+        const stmts = [];
+
+        for (const it of items) {
+          if (!it.id || !it.serial || !it.rom_version) continue;
+          const newPrefix = getDevicePrefix(it.serial);
+          affectedPrefixes.add(newPrefix);
+          if (it.old_prefix) affectedPrefixes.add(it.old_prefix);
+
+          stmts.push(
+            env.DB.prepare(
+              `UPDATE licenses SET serial = ?, rom_version = ?, key_status = ?, email_phone = ?, country = ?, gmail_notify = ?, note = ?, prefix = ? WHERE id = ?`
+            ).bind(
+              it.serial.trim(),
+              it.rom_version.trim(),
+              it.key_status || 'OK',
+              it.email_phone || '',
+              it.country || 'VN',
+              it.gmail_notify || 'NONE',
+              it.note || '',
+              newPrefix,
+              it.id
+            )
+          );
+        }
+
+        if (stmts.length > 0) {
+          for (let i = 0; i < stmts.length; i += 100) {
+            await env.DB.batch(stmts.slice(i, i + 100));
+          }
+        }
+
+        for (const p of affectedPrefixes) {
+          await cache.delete(new Request(`${url.origin}/json/${p}.json`, { method: "GET" }));
+          await cache.delete(new Request(`${url.origin}/${p}.json`, { method: "GET" }));
+          await syncShardToGitHub(env, p);
+        }
+
+        return jsonResponse({ success: true, count: stmts.length, message: `Đã lưu và đồng bộ thành công ${stmts.length} mục!` });
+      }
+      else if (action === "bulk_import_licenses") {
+        const { items } = body;
+        if (!Array.isArray(items) || items.length === 0) {
+          return jsonResponse({ success: false, error: "Dữ liệu nhập không hợp lệ" }, 400);
+        }
+        await ensureDbSchema(env);
+
+        const existingRes = await env.DB.prepare("SELECT serial, rom_version FROM licenses").all();
+        const existingSet = new Set((existingRes.results || []).map(r => `${(r.serial || '').trim()}_${(r.rom_version || '').trim()}`));
+
+        const affectedPrefixes = new Set();
+        const stmts = [];
+        let skipped = 0;
+
+        for (const it of items) {
+          const s = (it.serial || '').trim();
+          const r = (it.rom_version || '').trim();
+          if (!s || !r) continue;
+
+          const keyPair = `${s}_${r}`;
+          if (existingSet.has(keyPair)) {
+            skipped++;
+            continue;
+          }
+          existingSet.add(keyPair);
+
+          const prefix = getDevicePrefix(s);
+          affectedPrefixes.add(prefix);
+
+          stmts.push(
+            env.DB.prepare(
+              `INSERT INTO licenses (serial, rom_version, key_status, email_phone, country, gmail_notify, note, created_at, prefix)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            ).bind(
+              s,
+              r,
+              it.key_status || 'OK',
+              it.email_phone || '',
+              it.country || 'VN',
+              it.gmail_notify || 'NONE',
+              it.note || '',
+              Date.now(),
+              prefix
+            )
+          );
+        }
+
+        if (stmts.length > 0) {
+          for (let i = 0; i < stmts.length; i += 100) {
+            await env.DB.batch(stmts.slice(i, i + 100));
+          }
+        }
+
+        for (const p of affectedPrefixes) {
+          await cache.delete(new Request(`${url.origin}/json/${p}.json`, { method: "GET" }));
+          await cache.delete(new Request(`${url.origin}/${p}.json`, { method: "GET" }));
+          await syncShardToGitHub(env, p);
+        }
+
+        return jsonResponse({
+          success: true,
+          imported: stmts.length,
+          skipped,
+          message: `Đã nhập thành công ${stmts.length} mục (Bỏ qua ${skipped} mục trùng lặp)!`
+        });
+      }
+      else if (action === "bulk_delete_gift_keys") {
+        const { ids } = body;
+        if (!Array.isArray(ids) || ids.length === 0) {
+          return jsonResponse({ success: false, error: "Danh sách ID không hợp lệ" }, 400);
+        }
+        await ensureDbSchema(env);
+        const placeholders = ids.map(() => "?").join(",");
+        await env.DB.prepare(`DELETE FROM gift_keys WHERE id IN (${placeholders})`).bind(...ids).run();
+
+        await cache.delete(new Request(`${url.origin}/json/giftcode.json`, { method: "GET" }));
+        await cache.delete(new Request(`${url.origin}/giftcode.json`, { method: "GET" }));
+        await syncGiftCodeToGitHub(env);
+
+        return jsonResponse({ success: true, count: ids.length, message: `Đã xóa thành công ${ids.length} Gift Code!` });
+      }
+      else if (action === "bulk_update_gift_keys") {
+        const { items } = body;
+        if (!Array.isArray(items) || items.length === 0) {
+          return jsonResponse({ success: false, error: "Dữ liệu cập nhật không hợp lệ" }, 400);
+        }
+        await ensureDbSchema(env);
+        const stmts = [];
+        for (const it of items) {
+          if (!it.id || !it.gift_code || !it.start_date || !it.expiration_date) continue;
+          stmts.push(
+            env.DB.prepare(
+              `UPDATE gift_keys SET gift_code = ?, start_date = ?, expiration_date = ?, note = ? WHERE id = ?`
+            ).bind(it.gift_code.trim(), it.start_date.trim(), it.expiration_date.trim(), it.note || '', it.id)
+          );
+        }
+        if (stmts.length > 0) {
+          for (let i = 0; i < stmts.length; i += 100) {
+            await env.DB.batch(stmts.slice(i, i + 100));
+          }
+        }
+        await cache.delete(new Request(`${url.origin}/json/giftcode.json`, { method: "GET" }));
+        await cache.delete(new Request(`${url.origin}/giftcode.json`, { method: "GET" }));
+        await syncGiftCodeToGitHub(env);
+
+        return jsonResponse({ success: true, count: stmts.length, message: `Đã cập nhật ${stmts.length} Gift Code!` });
+      }
+      else if (action === "bulk_import_roms") {
+        const { names } = body;
+        if (!Array.isArray(names) || names.length === 0) {
+          return jsonResponse({ success: false, error: "Danh sách sản phẩm không hợp lệ" }, 400);
+        }
+        await ensureDbSchema(env);
+        const stmts = [];
+        const uniqueNames = new Set(names.map(n => String(n).trim()).filter(Boolean));
+        for (const name of uniqueNames) {
+          stmts.push(env.DB.prepare("INSERT OR IGNORE INTO rom_categories (name) VALUES (?)").bind(name));
+        }
+        if (stmts.length > 0) {
+          for (let i = 0; i < stmts.length; i += 100) {
+            await env.DB.batch(stmts.slice(i, i + 100));
+          }
+        }
+        return jsonResponse({ success: true, count: stmts.length, message: `Đã thêm thành công ${stmts.length} sản phẩm!` });
+      }
       else if (action === "resend_mail") {
         const item = await env.DB.prepare("SELECT * FROM licenses WHERE id = ?").bind(body.id).first();
         if (!item || !item.email_phone || !item.email_phone.includes("@")) {
@@ -1004,6 +1200,7 @@ function renderAdminHTML() {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>MRD Team - Quản Lý Kích hoạt Thiết bị</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <style>
     :root[data-theme="light"] {
       --bg-body: #f8fafc;
@@ -1237,7 +1434,6 @@ function renderAdminHTML() {
 
     .badge { padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; display: inline-block; border: 1px solid transparent; }
     .badge-OK { background: var(--badge-ok-bg); color: var(--badge-ok-color); border-color: var(--badge-ok-border); }
-    .badge-OFF { background: var(--badge-off-bg); color: var(--badge-off-color); border-color: var(--badge-off-border); }
     .badge-DEL { background: var(--badge-del-bg); color: var(--badge-del-color); border-color: var(--badge-del-border); }
     .badge-SENT { background: #e0f2fe; color: #0369a1; border-color: #bae6fd; }
     .badge-ERROR { background: var(--badge-del-bg); color: var(--badge-del-color); border-color: var(--badge-del-border); }
@@ -1290,13 +1486,116 @@ function renderAdminHTML() {
 
     .sidebar-backdrop { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 40; }
 
+    /* SEARCH & FILTER STYLES */
+    .filter-bar {
+      display: flex; gap: 10px; align-items: center; margin-bottom: 14px; flex-wrap: wrap;
+    }
+    .search-input-wrap {
+      position: relative; flex: 1; min-width: 220px;
+    }
+    .search-input-wrap input {
+      width: 100%; padding: 8px 12px 8px 34px; border: 1px solid var(--input-border);
+      border-radius: 20px; background: var(--input-bg); color: var(--text-main);
+      font-size: 13px; outline: none; transition: border-color 0.2s;
+    }
+    .search-input-wrap input:focus { border-color: #0284c7; }
+    .search-icon {
+      position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+      font-size: 13px; color: var(--text-muted); pointer-events: none;
+    }
+    .filter-select {
+      padding: 8px 12px; border: 1px solid var(--input-border); border-radius: 20px;
+      background: var(--input-bg); color: var(--text-main); font-size: 13px; outline: none; cursor: pointer;
+    }
+
+    /* BULK ACTIONS TOOLBAR */
+    .bulk-toolbar {
+      display: none; align-items: center; justify-content: space-between;
+      background: var(--table-hover); border: 1px solid var(--border-color);
+      border-radius: 8px; padding: 8px 14px; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;
+    }
+    .bulk-toolbar.show { display: flex; }
+    .bulk-toolbar-info { font-size: 13px; font-weight: 600; color: var(--text-main); display: flex; align-items: center; gap: 8px; }
+    .bulk-toolbar-actions { display: flex; gap: 8px; align-items: center; }
+
+    /* PAGINATION STYLES */
+    .pagination-bar {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 12px 6px; font-size: 13px; color: var(--text-muted); flex-wrap: wrap; gap: 10px;
+    }
+    .pagination-controls { display: flex; align-items: center; gap: 6px; }
+    .btn-page {
+      padding: 5px 10px; border: 1px solid var(--border-color); background: var(--bg-card);
+      color: var(--text-main); border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: 500;
+      transition: background 0.15s;
+    }
+    .btn-page:hover:not(:disabled) { background: var(--table-hover); }
+    .btn-page:disabled { opacity: 0.4; cursor: not-allowed; }
+    .page-info { font-weight: 600; font-size: 12px; padding: 0 4px; color: var(--text-main); }
+
+    /* MODAL TABLE SỬA HÀNG LOẠT (NỔI ĐÈ LÊN) */
+    .bulk-edit-modal-box {
+      background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 14px;
+      width: 100%; max-width: 1050px; max-height: 90vh; display: flex; flex-direction: column;
+      box-shadow: var(--dropdown-shadow); overflow: hidden;
+    }
+    .bulk-edit-modal-header {
+      padding: 16px 20px; border-bottom: 1px solid var(--border-color);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .bulk-edit-modal-body {
+      padding: 14px 20px; overflow: auto; flex: 1;
+    }
+    .bulk-edit-modal-footer {
+      padding: 14px 20px; border-top: 1px solid var(--border-color);
+      display: flex; justify-content: flex-end; gap: 10px;
+    }
+    .bulk-cell-input, .bulk-cell-select {
+      width: 100%; min-width: 110px; padding: 6px 8px; border: 1px solid var(--input-border);
+      border-radius: 6px; background: var(--input-bg); color: var(--text-main); font-size: 12.5px; outline: none;
+    }
+
+    /* UPLOAD MODAL */
+    .upload-dropzone {
+      border: 2px dashed var(--border-color); border-radius: 10px; padding: 24px;
+      text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s;
+      background: var(--table-hover); margin-bottom: 14px;
+    }
+    .upload-dropzone:hover { border-color: #0284c7; }
+    .preview-table-container {
+      max-height: 220px; overflow: auto; border: 1px solid var(--border-color); border-radius: 6px; margin-top: 10px;
+    }
+
+    /* TỐI ƯU MOBILE RESPONSIVE ĐỂ KHÔNG BỊ VỠ */
     @media (max-width: 768px) {
       .sidebar { position: fixed; top: 0; left: 0; height: 100%; transform: translateX(-100%); box-shadow: 0 0 20px rgba(0,0,0,0.3); }
       .sidebar.open { transform: translateX(0); }
       .sidebar-backdrop.open { display: block; }
       .menu-toggle-btn { display: inline-block; }
       .brand span:last-child { display: inline-block !important; }
-      .tab-content { padding: 12px; }
+      
+      .topbar { padding: 10px 12px; gap: 6px; }
+      #topbarTitle { font-size: 14px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .topbar-right { gap: 6px !important; }
+      #btnUploadLicense { padding: 5px 9px; font-size: 11.5px; }
+      #btnUploadLicense .btn-text-full { display: none; }
+      #btnSyncShards { padding: 5px 9px; font-size: 11.5px; }
+      #btnSyncShards .btn-text-full { display: none; }
+      #themeBtn { padding: 5px 8px; font-size: 12px; }
+      #themeBtnText { display: none; }
+      
+      .tab-content { padding: 10px 8px; }
+      .card { padding: 12px; border-radius: 10px; }
+      
+      .table-container table { min-width: 820px; }
+      #giftTab .table-container table { min-width: 700px; }
+      #romTab .table-container table { min-width: 100%; }
+      
+      .filter-bar { flex-direction: column; align-items: stretch; gap: 8px; }
+      .search-input-wrap { width: 100%; min-width: 100%; }
+      .bulk-toolbar { flex-direction: column; align-items: stretch; gap: 8px; }
+      .bulk-toolbar-actions { justify-content: flex-end; }
+      .pagination-bar { flex-direction: column; align-items: center; gap: 8px; text-align: center; }
     }
 
     #confirmOverlay {
@@ -1384,8 +1683,9 @@ function renderAdminHTML() {
         <button class="menu-toggle-btn" onclick="toggleSidebar(true)">☰</button>
         <div style="font-size: 17px; font-weight: bold;" id="topbarTitle">Danh sách Kích hoạt</div>
       </div>
-      <div class="topbar-right" style="display: flex; align-items: center; gap: 10px;">
-        <button class="btn btn-blue" id="btnSyncShards" style="padding: 6px 14px; font-size: 12px; border-radius: 20px;" onclick="handleSyncAllPrefixes()" title="Tính toán lại Prefix và đồng bộ cache phân mảnh">🔄 Đồng bộ Shards</button>
+      <div class="topbar-right" style="display: flex; align-items: center; gap: 8px;">
+        <button class="btn btn-green" id="btnUploadLicense" style="padding: 6px 12px; font-size: 12px; border-radius: 20px;" onclick="openUploadModal('license')" title="Tải lên tệp Excel danh sách kích hoạt">📥 <span class="btn-text-full">Upload Excel</span></button>
+        <button class="btn btn-blue" id="btnSyncShards" style="padding: 6px 12px; font-size: 12px; border-radius: 20px;" onclick="handleSyncAllPrefixes()" title="Tính toán lại Prefix và đồng bộ cache phân mảnh">🔄 <span class="btn-text-full">Đồng bộ Shards</span></button>
         <div class="theme-dropdown-container">
           <button class="theme-toggle-btn" id="themeBtn" onclick="toggleThemeDropdown(event)" title="Chọn giao diện">
             <span id="themeBtnIcon">🌙</span>
@@ -1413,11 +1713,42 @@ function renderAdminHTML() {
     <!-- TAB 1: DANH SÁCH -->
     <div id="listTab" class="tab-content active">
       <div class="card">
+        <!-- FILTER BAR -->
+        <div class="filter-bar">
+          <div class="search-input-wrap">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="licenseSearchInput" placeholder="Tìm kiếm Serial, Phiên bản, Email/SĐT, Ghi chú..." oninput="onLicenseSearchChange()">
+          </div>
+          <select class="filter-select" id="licenseStatusFilter" onchange="onLicenseSearchChange()">
+            <option value="">-- Tất cả trạng thái --</option>
+            <option value="OK">OK (Kích hoạt)</option>
+            <option value="DEL">DEL (Xóa)</option>
+          </select>
+          <select class="filter-select" id="licenseRomFilter" onchange="onLicenseSearchChange()">
+            <option value="">-- Tất cả sản phẩm --</option>
+          </select>
+        </div>
+
+        <!-- BULK TOOLBAR -->
+        <div class="bulk-toolbar" id="licenseBulkToolbar">
+          <div class="bulk-toolbar-info">
+            <span id="licenseBulkCountText">Đã chọn 0 mục</span>
+            <button type="button" class="btn btn-gray" style="padding: 3px 8px; font-size: 11px;" onclick="clearLicenseSelection()">Bỏ chọn</button>
+          </div>
+          <div class="bulk-toolbar-actions">
+            <button type="button" class="btn btn-blue" style="padding: 6px 12px; font-size: 12px;" onclick="openBulkEditLicenseModal()">✏️ Sửa đã chọn</button>
+            <button type="button" class="btn btn-red" style="padding: 6px 12px; font-size: 12px;" onclick="handleBulkDeleteLicenses()">🗑️ Xóa đã chọn</button>
+          </div>
+        </div>
+
         <div class="table-container">
           <table>
             <thead>
               <tr>
-                <th>STT</th>
+                <th style="width: 40px; text-align: center;">
+                  <input type="checkbox" id="checkAllLicenses" onchange="toggleSelectAllLicenses(this.checked)">
+                </th>
+                <th style="width: 50px;">STT</th>
                 <th>SERIAL</th>
                 <th>PHIÊN BẢN</th>
                 <th>TRẠNG THÁI KEY</th>
@@ -1429,10 +1760,13 @@ function renderAdminHTML() {
               </tr>
             </thead>
             <tbody id="licenseTableBody">
-              <tr><td colspan="9" style="text-align: center; color: var(--text-muted);">Đang tải dữ liệu...</td></tr>
+              <tr><td colspan="10" style="text-align: center; color: var(--text-muted);">Đang tải dữ liệu...</td></tr>
             </tbody>
           </table>
         </div>
+
+        <!-- PAGINATION -->
+        <div class="pagination-bar" id="licensePagination"></div>
       </div>
     </div>
 
@@ -1451,7 +1785,6 @@ function renderAdminHTML() {
           <label>TRẠNG THÁI KEY</label>
           <select id="addStatus">
             <option value="OK">OK (Kích hoạt)</option>
-            <option value="OFF">OFF (Ngưng)</option>
             <option value="DEL">DEL (Xóa)</option>
           </select>
         </div>
@@ -1476,21 +1809,32 @@ function renderAdminHTML() {
 
     <!-- TAB 3: DANH MỤC SẢN PHẨM -->
     <div id="romTab" class="tab-content">
-      <div class="card" style="max-width: 600px; margin: 0 auto 20px auto;">
-        <h4 style="margin-bottom: 12px;">Thêm Sản phẩm</h4>
+      <div class="card" style="max-width: 650px; margin: 0 auto 20px auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+          <h4 style="margin: 0;">Thêm Sản phẩm</h4>
+          <button class="btn btn-green" style="padding: 5px 12px; font-size: 12px;" onclick="openUploadModal('rom')">📥 Upload Excel Sản phẩm</button>
+        </div>
         <div style="display: flex; gap: 8px;">
           <input type="text" id="newRomName" placeholder="Tên Sản phẩm mới..." style="flex: 1; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-body); color: var(--text-main);">
           <button class="btn btn-blue" onclick="handleAddRom()">+ Thêm</button>
         </div>
       </div>
-      <div class="card" style="max-width: 600px; margin: auto;">
-        <h4 style="margin-bottom: 12px;">Danh sách Sản phẩm hiện tại</h4>
+
+      <div class="card" style="max-width: 650px; margin: auto;">
+        <div class="filter-bar" style="margin-bottom: 12px;">
+          <div class="search-input-wrap">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="romSearchInput" placeholder="Tìm kiếm Sản phẩm..." oninput="onRomSearchChange()">
+          </div>
+        </div>
         <div class="table-container">
           <table>
-            <thead><tr><th>Tên Sản phẩm</th><th style="width: 80px;">Hành động</th></tr></thead>
+            <thead><tr><th>Tên Sản phẩm</th><th style="width: 80px; text-align: center;">Hành động</th></tr></thead>
             <tbody id="romTableBody"></tbody>
           </table>
         </div>
+        <!-- PAGINATION -->
+        <div class="pagination-bar" id="romPagination"></div>
       </div>
     </div>
 
@@ -1500,7 +1844,7 @@ function renderAdminHTML() {
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
           <div style="display: flex; align-items: center; gap: 10px;">
             <h3 style="margin: 0; font-size: 16px;">🎁 Danh sách Gift Code</h3>
-            <a id="giftShardBadgeLink" href="/json/giftcode.json" target="_blank" title="Mở file JSON phân mảnh trên Cloudflare Pages" style="text-decoration:none;">
+            <a id="giftShardBadgeLink" href="/json/giftcode.json" target="_blank" title="Mở file JSON trên GitHub Repo" style="text-decoration:none;">
               <span class="badge badge-shard">🚀 json/giftcode.json</span>
             </a>
           </div>
@@ -1511,10 +1855,38 @@ function renderAdminHTML() {
       </div>
 
       <div class="card">
+        <!-- FILTER BAR -->
+        <div class="filter-bar">
+          <div class="search-input-wrap">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="giftSearchInput" placeholder="Tìm kiếm Gift Code, Ghi chú..." oninput="onGiftSearchChange()">
+          </div>
+          <select class="filter-select" id="giftStatusFilter" onchange="onGiftSearchChange()">
+            <option value="">-- Tất cả trạng thái --</option>
+            <option value="ACTIVE">OK (Còn hạn)</option>
+            <option value="EXPIRED">BLOCK (Hết hạn)</option>
+          </select>
+        </div>
+
+        <!-- BULK TOOLBAR -->
+        <div class="bulk-toolbar" id="giftBulkToolbar">
+          <div class="bulk-toolbar-info">
+            <span id="giftBulkCountText">Đã chọn 0 mục</span>
+            <button type="button" class="btn btn-gray" style="padding: 3px 8px; font-size: 11px;" onclick="clearGiftSelection()">Bỏ chọn</button>
+          </div>
+          <div class="bulk-toolbar-actions">
+            <button type="button" class="btn btn-blue" style="padding: 6px 12px; font-size: 12px;" onclick="openBulkEditGiftModal()">✏️ Sửa đã chọn</button>
+            <button type="button" class="btn btn-red" style="padding: 6px 12px; font-size: 12px;" onclick="handleBulkDeleteGifts()">🗑️ Xóa đã chọn</button>
+          </div>
+        </div>
+
         <div class="table-container">
           <table>
             <thead>
               <tr>
+                <th style="width: 40px; text-align: center;">
+                  <input type="checkbox" id="checkAllGifts" onchange="toggleSelectAllGifts(this.checked)">
+                </th>
                 <th style="width: 50px;">STT</th>
                 <th>GIFT CODE</th>
                 <th>NGÀY TẠO</th>
@@ -1525,12 +1897,121 @@ function renderAdminHTML() {
               </tr>
             </thead>
             <tbody id="giftTableBody">
-              <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">Đang tải dữ liệu Gift Code...</td></tr>
+              <tr><td colspan="8" style="text-align: center; color: var(--text-muted);">Đang tải dữ liệu Gift Code...</td></tr>
             </tbody>
           </table>
         </div>
+
+        <!-- PAGINATION -->
+        <div class="pagination-bar" id="giftPagination"></div>
       </div>
     </div>
+  </div>
+
+  <!-- MODAL BẢNG SỬA NỔI HÀNG LOẠT (KÍCH HOẠT) -->
+  <div class="modal-backdrop" id="bulkEditLicenseModal">
+    <div class="bulk-edit-modal-box">
+      <div class="bulk-edit-modal-header">
+        <h3 style="font-size: 16px; margin: 0;">✏️ Chỉnh sửa hàng loạt Danh sách Kích hoạt</h3>
+        <span class="close-btn" onclick="closeBulkEditLicenseModal()">&times;</span>
+      </div>
+      <div class="bulk-edit-modal-body">
+        <div class="table-container">
+          <table style="min-width: 900px;">
+            <thead>
+              <tr>
+                <th style="width: 40px;">STT</th>
+                <th>SERIAL (*)</th>
+                <th>PHIÊN BẢN (*)</th>
+                <th>TRẠNG THÁI KEY</th>
+                <th>EMAIL/SĐT</th>
+                <th>QUỐC GIA</th>
+                <th>GỬI MAIL</th>
+                <th>GHI CHÚ</th>
+              </tr>
+            </thead>
+            <tbody id="bulkEditLicenseTbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="bulk-edit-modal-footer">
+        <button type="button" class="btn btn-gray" onclick="closeBulkEditLicenseModal()">Hủy</button>
+        <button type="button" class="btn btn-green" id="btnSaveBulkLicenses" onclick="saveBulkEditLicenses()">🔄 Đồng bộ Tất cả</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL BẢNG SỬA NỔI HÀNG LOẠT (GIFT CODE) -->
+  <div class="modal-backdrop" id="bulkEditGiftModal">
+    <div class="bulk-edit-modal-box" style="max-width: 850px;">
+      <div class="bulk-edit-modal-header">
+        <h3 style="font-size: 16px; margin: 0;">✏️ Chỉnh sửa hàng loạt Gift Code</h3>
+        <span class="close-btn" onclick="closeBulkEditGiftModal()">&times;</span>
+      </div>
+      <div class="bulk-edit-modal-body">
+        <div class="table-container">
+          <table style="min-width: 750px;">
+            <thead>
+              <tr>
+                <th style="width: 40px;">STT</th>
+                <th>GIFT CODE (*)</th>
+                <th>NGÀY TẠO (YYYY-MM-DD) (*)</th>
+                <th>NGÀY HẾT HẠN (YYYY-MM-DD) (*)</th>
+                <th>GHI CHÚ</th>
+              </tr>
+            </thead>
+            <tbody id="bulkEditGiftTbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="bulk-edit-modal-footer">
+        <button type="button" class="btn btn-gray" onclick="closeBulkEditGiftModal()">Hủy</button>
+        <button type="button" class="btn btn-green" id="btnSaveBulkGifts" onclick="saveBulkEditGifts()">🔄 Đồng bộ Tất cả</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL UPLOAD EXCEL (DÙNG CHUNG CHO KÍCH HOẠT VÀ SẢN PHẨM) -->
+  <div class="modal-backdrop" id="uploadExcelModal">
+    <div class="modal-box" style="max-width: 700px;">
+      <div class="modal-header">
+        <h3 id="uploadModalTitle">📥 Tải lên tệp Excel</h3>
+        <span class="close-btn" onclick="closeUploadModal()">&times;</span>
+      </div>
+      
+      <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;" id="uploadModalDesc">
+        Chọn file Excel (.xlsx, .xls) hoặc .csv để nhập danh sách vào hệ thống.
+      </div>
+
+      <div class="upload-dropzone" onclick="document.getElementById('excelFileInput').click()">
+        <input type="file" id="excelFileInput" accept=".xlsx,.xls,.csv" style="display: none;" onchange="handleExcelFileSelected(event)">
+        <div style="font-size: 32px; margin-bottom: 8px;">📊</div>
+        <div style="font-weight: 600; font-size: 14px; margin-bottom: 4px;" id="uploadFileNameText">Nhấp để chọn tệp Excel hoặc kéo thả vào đây</div>
+        <div style="font-size: 12px; color: var(--text-muted);">Hỗ trợ định dạng: .xlsx, .xls, .csv</div>
+      </div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <span style="font-size: 12px; font-weight: 600;" id="uploadPreviewTitle">Xem trước dữ liệu:</span>
+        <button type="button" class="btn btn-gray" style="padding: 4px 8px; font-size: 11px;" onclick="downloadSampleExcel()">📥 Tải file mẫu (.xlsx)</button>
+      </div>
+
+      <div class="preview-table-container">
+        <table id="uploadPreviewTable">
+          <thead></thead>
+          <tbody>
+            <tr><td style="text-align: center; color: var(--text-muted); padding: 16px;">Chưa chọn tệp tin nào.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="margin-top: 10px; font-size: 12px; font-weight: 600; color: #0284c7;" id="uploadSummaryText"></div>
+
+      <div class="modal-footer" style="margin-top: 16px;">
+        <button type="button" class="btn btn-gray" onclick="closeUploadModal()">Hủy</button>
+        <button type="button" class="btn btn-green" id="btnConfirmUpload" disabled onclick="executeBulkImport()">+ Xác nhận Nhập dữ liệu</button>
+      </div>
+    </div>
+  </div>
   </div>
 
   <!-- MODAL TẠO / SỬA GIFT CODE -->
@@ -1597,7 +2078,6 @@ function renderAdminHTML() {
         <label>TRẠNG THÁI KEY</label>
         <select id="editStatus" disabled>
           <option value="OK">OK (Kích hoạt)</option>
-          <option value="OFF">OFF (Ngưng kích hoạt)</option>
           <option value="DEL">DEL (Xóa)</option>
         </select>
       </div>
@@ -1634,6 +2114,25 @@ function renderAdminHTML() {
     let currentAuthToken = "";
     let systemData = { licenses: [], rom_categories: [], gift_keys: [] };
     let currentSelectedItem = null;
+
+    // Phân trang & Tìm kiếm & Bulk Selection & Excel State
+    const PAGE_SIZE = 10;
+    let licensePage = 1;
+    let giftPage = 1;
+    let romPage = 1;
+
+    let licenseSearchText = "";
+    let licenseStatusFilter = "";
+    let licenseRomFilter = "";
+    let giftSearchText = "";
+    let giftStatusFilter = "";
+    let romSearchText = "";
+
+    let selectedLicenseIds = new Set();
+    let selectedGiftIds = new Set();
+
+    let currentUploadType = "license";
+    let parsedImportData = [];
 
     function showToast(message, type = "info", duration = 4000) {
       const container = document.getElementById("toastContainer");
@@ -1769,6 +2268,11 @@ function renderAdminHTML() {
         syncBtn.style.display = (tabId === "listTab") ? "inline-flex" : "none";
       }
 
+      const uploadBtn = document.getElementById("btnUploadLicense");
+      if (uploadBtn) {
+        uploadBtn.style.display = (tabId === "listTab") ? "inline-flex" : "none";
+      }
+
       if (window.innerWidth <= 768) toggleSidebar(false);
     }
 
@@ -1884,60 +2388,359 @@ function renderAdminHTML() {
       return "https://github.com/" + cleanRepo + "/blob/main/" + filePath;
     }
 
-    function renderLicenseTable() {
-      const tbody = document.getElementById("licenseTableBody");
-      if (!systemData.licenses.length) {
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; color:var(--text-muted);">Chưa có bản ghi nào.</td></tr>';
+    function onLicenseSearchChange() {
+      const input = document.getElementById("licenseSearchInput");
+      const status = document.getElementById("licenseStatusFilter");
+      const rom = document.getElementById("licenseRomFilter");
+      licenseSearchText = (input ? input.value : "").trim().toLowerCase();
+      licenseStatusFilter = status ? status.value : "";
+      licenseRomFilter = rom ? rom.value : "";
+      licensePage = 1;
+      renderLicenseTable();
+    }
+
+    function onGiftSearchChange() {
+      const input = document.getElementById("giftSearchInput");
+      const status = document.getElementById("giftStatusFilter");
+      giftSearchText = (input ? input.value : "").trim().toLowerCase();
+      giftStatusFilter = status ? status.value : "";
+      giftPage = 1;
+      renderGiftTable();
+    }
+
+    function onRomSearchChange() {
+      const input = document.getElementById("romSearchInput");
+      romSearchText = (input ? input.value : "").trim().toLowerCase();
+      romPage = 1;
+      renderRomTable();
+    }
+
+    function getFilteredLicenses() {
+      const list = systemData.licenses || [];
+      return list.filter(function(item) {
+        if (licenseStatusFilter && item.key_status !== licenseStatusFilter) return false;
+        if (licenseRomFilter && item.rom_version !== licenseRomFilter) return false;
+        if (licenseSearchText) {
+          const serial = (item.serial || "").toLowerCase();
+          const rom = (item.rom_version || "").toLowerCase();
+          const email = (item.email_phone || "").toLowerCase();
+          const note = (item.note || "").toLowerCase();
+          const prefix = (item.prefix || "").toLowerCase();
+          const match = serial.indexOf(licenseSearchText) !== -1 ||
+                        rom.indexOf(licenseSearchText) !== -1 ||
+                        email.indexOf(licenseSearchText) !== -1 ||
+                        note.indexOf(licenseSearchText) !== -1 ||
+                        prefix.indexOf(licenseSearchText) !== -1;
+          if (!match) return false;
+        }
+        return true;
+      });
+    }
+
+    function getFilteredGifts() {
+      const list = systemData.gift_keys || [];
+      const todayStr = new Date().toISOString().split("T")[0];
+      return list.filter(function(item) {
+        const isExpired = (item.expiration_date || "") < todayStr;
+        if (giftStatusFilter === "ACTIVE" && isExpired) return false;
+        if (giftStatusFilter === "EXPIRED" && !isExpired) return false;
+        if (giftSearchText) {
+          const code = (item.gift_code || "").toLowerCase();
+          const note = (item.note || "").toLowerCase();
+          const match = code.indexOf(giftSearchText) !== -1 || note.indexOf(giftSearchText) !== -1;
+          if (!match) return false;
+        }
+        return true;
+      });
+    }
+
+    function getFilteredRoms() {
+      const list = systemData.rom_categories || [];
+      return list.filter(function(name) {
+        if (!romSearchText) return true;
+        return name.toLowerCase().indexOf(romSearchText) !== -1;
+      });
+    }
+
+    function renderPaginationUI(containerId, currentPage, totalPages, totalCount, onPageFnName) {
+      const container = document.getElementById(containerId);
+      if (!container) return;
+      if (totalCount === 0) {
+        container.innerHTML = "";
         return;
       }
 
-      tbody.innerHTML = systemData.licenses.map((item, index) => {
-        const stt = index + 1; // Tự động đánh số STT liên tục 1, 2, 3...
-        const linkHref = getGithubFileUrl("json/" + item.prefix + ".json");
-        return \`
-          <tr onclick="openDetailModal(\${item.id})">
-            <td><b>\${stt}</b></td>
-            <td><b><code>\${item.serial}</code></b></td>
-            <td><code>\${item.rom_version}</code></td>
-            <td><span class="badge badge-\${item.key_status}">\${item.key_status}</span></td>
-            <td>\${item.email_phone || "-"}</td>
-            <td>\${item.country}</td>
-            <td><span class="badge badge-\${item.gmail_notify}">\${item.gmail_notify}</span></td>
-            <td>
-              <a href="\${linkHref}" target="_blank" onclick="event.stopPropagation()" title="Mở file JSON trên GitHub Repo" style="text-decoration:none;">
-                <span class="badge badge-shard">🚀 json/\${item.prefix}.json</span>
-              </a>
-            </td>
-            <td>\${item.note || ""}</td>
-          </tr>
-        \`;
-      }).join('');
+      let html = '<div class="page-info">Trang ' + currentPage + ' / ' + totalPages + ' (Tổng cộng ' + totalCount + ' mục)</div>';
+      html += '<div class="pagination-controls">';
+      html += '<button type="button" class="btn-page" ' + (currentPage <= 1 ? 'disabled' : '') + ' onclick="' + onPageFnName + '(1)">« Đầu</button>';
+      html += '<button type="button" class="btn-page" ' + (currentPage <= 1 ? 'disabled' : '') + ' onclick="' + onPageFnName + '(' + (currentPage - 1) + ')">‹ Trước</button>';
+
+      const startPage = Math.max(1, currentPage - 2);
+      const endPage = Math.min(totalPages, currentPage + 2);
+
+      for (let p = startPage; p <= endPage; p++) {
+        const activeStyle = (p === currentPage) ? ' style="background:#0284c7; color:#fff; font-weight:bold; border-color:#0284c7;"' : '';
+        html += '<button type="button" class="btn-page"' + activeStyle + ' onclick="' + onPageFnName + '(' + p + ')">' + p + '</button>';
+      }
+
+      html += '<button type="button" class="btn-page" ' + (currentPage >= totalPages ? 'disabled' : '') + ' onclick="' + onPageFnName + '(' + (currentPage + 1) + ')">Sau ›</button>';
+      html += '<button type="button" class="btn-page" ' + (currentPage >= totalPages ? 'disabled' : '') + ' onclick="' + onPageFnName + '(' + totalPages + ')">Cuối »</button>';
+      html += '</div>';
+
+      container.innerHTML = html;
+    }
+
+    function gotoLicensePage(p) {
+      licensePage = p;
+      renderLicenseTable();
+    }
+    function gotoGiftPage(p) {
+      giftPage = p;
+      renderGiftTable();
+    }
+    function gotoRomPage(p) {
+      romPage = p;
+      renderRomTable();
+    }
+
+    function updateLicenseBulkToolbar() {
+      const toolbar = document.getElementById("licenseBulkToolbar");
+      const countText = document.getElementById("licenseBulkCountText");
+      if (!toolbar) return;
+      const count = selectedLicenseIds.size;
+      if (count > 0) {
+        toolbar.classList.add("show");
+        if (countText) countText.innerText = "Đã chọn " + count + " mục";
+      } else {
+        toolbar.classList.remove("show");
+      }
+    }
+
+    function toggleLicenseItem(id, isChecked) {
+      if (isChecked) {
+        selectedLicenseIds.add(id);
+      } else {
+        selectedLicenseIds.delete(id);
+      }
+      updateLicenseBulkToolbar();
+      updateCheckAllLicensesState();
+    }
+
+    function toggleSelectAllLicenses(isChecked) {
+      const filtered = getFilteredLicenses();
+      const totalPages = Math.ceil(filtered.length / PAGE_SIZE) || 1;
+      const curPage = Math.min(Math.max(1, licensePage), totalPages);
+      const start = (curPage - 1) * PAGE_SIZE;
+      const pageItems = filtered.slice(start, start + PAGE_SIZE);
+
+      pageItems.forEach(function(item) {
+        if (isChecked) {
+          selectedLicenseIds.add(item.id);
+        } else {
+          selectedLicenseIds.delete(item.id);
+        }
+      });
+      renderLicenseTable();
+    }
+
+    function clearLicenseSelection() {
+      selectedLicenseIds.clear();
+      renderLicenseTable();
+    }
+
+    function updateCheckAllLicensesState() {
+      const checkAll = document.getElementById("checkAllLicenses");
+      if (!checkAll) return;
+      const filtered = getFilteredLicenses();
+      const totalPages = Math.ceil(filtered.length / PAGE_SIZE) || 1;
+      const curPage = Math.min(Math.max(1, licensePage), totalPages);
+      const start = (curPage - 1) * PAGE_SIZE;
+      const pageItems = filtered.slice(start, start + PAGE_SIZE);
+
+      if (pageItems.length === 0) {
+        checkAll.checked = false;
+        checkAll.indeterminate = false;
+        return;
+      }
+      const pageSelectedCount = pageItems.filter(function(it) { return selectedLicenseIds.has(it.id); }).length;
+      if (pageSelectedCount === pageItems.length) {
+        checkAll.checked = true;
+        checkAll.indeterminate = false;
+      } else if (pageSelectedCount > 0) {
+        checkAll.checked = false;
+        checkAll.indeterminate = true;
+      } else {
+        checkAll.checked = false;
+        checkAll.indeterminate = false;
+      }
+    }
+
+    function renderLicenseTable() {
+      const tbody = document.getElementById("licenseTableBody");
+      if (!tbody) return;
+
+      const filtered = getFilteredLicenses();
+      const totalCount = filtered.length;
+      const totalPages = Math.ceil(totalCount / PAGE_SIZE) || 1;
+
+      if (licensePage > totalPages) licensePage = totalPages;
+      if (licensePage < 1) licensePage = 1;
+
+      const start = (licensePage - 1) * PAGE_SIZE;
+      const pageItems = filtered.slice(start, start + PAGE_SIZE);
+
+      if (pageItems.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: var(--text-muted); padding: 24px;">Không tìm thấy bản ghi nào.</td></tr>';
+      } else {
+        tbody.innerHTML = pageItems.map(function(item, index) {
+          const stt = start + index + 1;
+          const isSelected = selectedLicenseIds.has(item.id);
+          const linkHref = getGithubFileUrl("json/" + item.prefix + ".json");
+          return '<tr onclick="openDetailModal(' + item.id + ')" style="' + (isSelected ? 'background: var(--table-hover);' : '') + '">' +
+            '<td style="text-align: center;" onclick="event.stopPropagation()">' +
+              '<input type="checkbox" ' + (isSelected ? 'checked' : '') + ' onchange="toggleLicenseItem(' + item.id + ', this.checked)">' +
+            '</td>' +
+            '<td><b>' + stt + '</b></td>' +
+            '<td><b><code>' + item.serial + '</code></b></td>' +
+            '<td><code>' + item.rom_version + '</code></td>' +
+            '<td><span class="badge badge-' + item.key_status + '">' + item.key_status + '</span></td>' +
+            '<td>' + (item.email_phone || "-") + '</td>' +
+            '<td>' + item.country + '</td>' +
+            '<td><span class="badge badge-' + item.gmail_notify + '">' + item.gmail_notify + '</span></td>' +
+            '<td>' +
+              '<a href="' + linkHref + '" target="_blank" onclick="event.stopPropagation()" title="Mở file JSON trên GitHub Repo" style="text-decoration:none;">' +
+                '<span class="badge badge-shard">🚀 json/' + item.prefix + '.json</span>' +
+              '</a>' +
+            '</td>' +
+            '<td>' + (item.note || "") + '</td>' +
+          '</tr>';
+        }).join('');
+      }
+
+      updateLicenseBulkToolbar();
+      updateCheckAllLicensesState();
+      renderPaginationUI("licensePagination", licensePage, totalPages, totalCount, "gotoLicensePage");
     }
 
     function renderRomDropdowns() {
-      const options = systemData.rom_categories.map(r => \`<option value="\${r}">\${r}</option>\`).join('');
-      document.getElementById("addRomSelect").innerHTML = options;
-      document.getElementById("editRomSelect").innerHTML = options;
+      const roms = systemData.rom_categories || [];
+      const options = roms.map(function(r) { return '<option value="' + r + '">' + r + '</option>'; }).join('');
+      const addSel = document.getElementById("addRomSelect");
+      if (addSel) addSel.innerHTML = options;
+      const editSel = document.getElementById("editRomSelect");
+      if (editSel) editSel.innerHTML = options;
+
+      const filterSel = document.getElementById("licenseRomFilter");
+      if (filterSel) {
+        const curVal = filterSel.value;
+        filterSel.innerHTML = '<option value="">-- Tất cả sản phẩm --</option>' +
+          roms.map(function(r) { return '<option value="' + r + '"' + (r === curVal ? ' selected' : '') + '>' + r + '</option>'; }).join('');
+      }
     }
 
     function renderRomTable() {
       const tbody = document.getElementById("romTableBody");
-      if (!systemData.rom_categories.length) {
-        tbody.innerHTML = '<tr><td colspan="2" style="color:var(--text-muted);">Chưa có Sản phẩm.</td></tr>';
+      if (!tbody) return;
+
+      const filtered = getFilteredRoms();
+      const totalCount = filtered.length;
+      const totalPages = Math.ceil(totalCount / PAGE_SIZE) || 1;
+
+      if (romPage > totalPages) romPage = totalPages;
+      if (romPage < 1) romPage = 1;
+
+      const start = (romPage - 1) * PAGE_SIZE;
+      const pageItems = filtered.slice(start, start + PAGE_SIZE);
+
+      if (pageItems.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="2" style="color:var(--text-muted); text-align:center; padding: 20px;">Không tìm thấy Sản phẩm nào.</td></tr>';
+      } else {
+        tbody.innerHTML = pageItems.map(function(r) {
+          return '<tr>' +
+            '<td><b><code>' + r + '</code></b></td>' +
+            '<td style="text-align: center;"><button type="button" class="btn btn-red" style="padding:4px 8px;font-size:11px;" data-name="' + r + '" onclick="handleDeleteRom(this.dataset.name)">Xóa</button></td>' +
+          '</tr>';
+        }).join('');
+      }
+
+      renderPaginationUI("romPagination", romPage, totalPages, totalCount, "gotoRomPage");
+    }
+
+    function updateGiftBulkToolbar() {
+      const toolbar = document.getElementById("giftBulkToolbar");
+      const countText = document.getElementById("giftBulkCountText");
+      if (!toolbar) return;
+      const count = selectedGiftIds.size;
+      if (count > 0) {
+        toolbar.classList.add("show");
+        if (countText) countText.innerText = "Đã chọn " + count + " mục";
+      } else {
+        toolbar.classList.remove("show");
+      }
+    }
+
+    function toggleGiftItem(id, isChecked) {
+      if (isChecked) {
+        selectedGiftIds.add(id);
+      } else {
+        selectedGiftIds.delete(id);
+      }
+      updateGiftBulkToolbar();
+      updateCheckAllGiftsState();
+    }
+
+    function toggleSelectAllGifts(isChecked) {
+      const filtered = getFilteredGifts();
+      const totalPages = Math.ceil(filtered.length / PAGE_SIZE) || 1;
+      const curPage = Math.min(Math.max(1, giftPage), totalPages);
+      const start = (curPage - 1) * PAGE_SIZE;
+      const pageItems = filtered.slice(start, start + PAGE_SIZE);
+
+      pageItems.forEach(function(item) {
+        if (isChecked) {
+          selectedGiftIds.add(item.id);
+        } else {
+          selectedGiftIds.delete(item.id);
+        }
+      });
+      renderGiftTable();
+    }
+
+    function clearGiftSelection() {
+      selectedGiftIds.clear();
+      renderGiftTable();
+    }
+
+    function updateCheckAllGiftsState() {
+      const checkAll = document.getElementById("checkAllGifts");
+      if (!checkAll) return;
+      const filtered = getFilteredGifts();
+      const totalPages = Math.ceil(filtered.length / PAGE_SIZE) || 1;
+      const curPage = Math.min(Math.max(1, giftPage), totalPages);
+      const start = (curPage - 1) * PAGE_SIZE;
+      const pageItems = filtered.slice(start, start + PAGE_SIZE);
+
+      if (pageItems.length === 0) {
+        checkAll.checked = false;
+        checkAll.indeterminate = false;
         return;
       }
-      tbody.innerHTML = systemData.rom_categories.map(r => \`
-        <tr>
-          <td><b><code>\${r}</code></b></td>
-          <td><button type="button" class="btn btn-red" style="padding:4px 8px;font-size:11px;" onclick="handleDeleteRom('\${r}')">Xóa</button></td>
-        </tr>
-      \`).join('');
+      const pageSelectedCount = pageItems.filter(function(it) { return selectedGiftIds.has(it.id); }).length;
+      if (pageSelectedCount === pageItems.length) {
+        checkAll.checked = true;
+        checkAll.indeterminate = false;
+      } else if (pageSelectedCount > 0) {
+        checkAll.checked = false;
+        checkAll.indeterminate = true;
+      } else {
+        checkAll.checked = false;
+        checkAll.indeterminate = false;
+      }
     }
 
     function renderGiftTable() {
       const tbody = document.getElementById("giftTableBody");
       if (!tbody) return;
-      const gifts = systemData.gift_keys || [];
 
       const badgeLink = document.getElementById("giftShardBadgeLink");
       if (badgeLink) {
@@ -1945,35 +2748,537 @@ function renderAdminHTML() {
         badgeLink.title = "Mở file json/giftcode.json trên GitHub Repo";
       }
 
-      if (!gifts.length) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding: 20px;">Chưa có Gift Code nào. Bấm nút "+ Tạo Gift Code" ở trên để thêm.</td></tr>';
-        return;
-      }
+      const filtered = getFilteredGifts();
+      const totalCount = filtered.length;
+      const totalPages = Math.ceil(totalCount / PAGE_SIZE) || 1;
 
+      if (giftPage > totalPages) giftPage = totalPages;
+      if (giftPage < 1) giftPage = 1;
+
+      const start = (giftPage - 1) * PAGE_SIZE;
+      const pageItems = filtered.slice(start, start + PAGE_SIZE);
       const todayStr = new Date().toISOString().split("T")[0];
 
-      tbody.innerHTML = gifts.map((item, index) => {
-        const stt = index + 1; // STT được hệ thống tự động sinh theo thứ tự, không lưu cố định trong DB
-        const isExpired = item.expiration_date < todayStr;
-        const statusBadge = isExpired
-          ? '<span class="badge badge-OFF">BLOCK</span>'
-          : '<span class="badge badge-OK">OK</span>';
+      if (pageItems.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 24px;">Không tìm thấy Gift Code nào. Bấm nút "+ Tạo Gift Code" ở trên để thêm.</td></tr>';
+      } else {
+        tbody.innerHTML = pageItems.map(function(item, index) {
+          const stt = start + index + 1;
+          const isSelected = selectedGiftIds.has(item.id);
+          const isExpired = item.expiration_date < todayStr;
+          const statusBadge = isExpired
+            ? '<span class="badge badge-OFF">BLOCK</span>'
+            : '<span class="badge badge-OK">OK</span>';
 
-        return \`
-          <tr>
-            <td><b>\${stt}</b></td>
-            <td><b><code>\${item.gift_code}</code></b></td>
-            <td><code>\${item.start_date}</code></td>
-            <td><code>\${item.expiration_date}</code></td>
-            <td>\${statusBadge}</td>
-            <td>\${item.note || "-"}</td>
-            <td style="text-align: center;">
-              <button type="button" class="btn btn-blue" style="padding: 4px 8px; font-size: 11px; margin-right: 4px;" onclick="openEditGiftModal(\${item.id})">Sửa</button>
-              <button type="button" class="btn btn-red" style="padding: 4px 8px; font-size: 11px;" onclick="handleDeleteGiftKey(\${item.id}, '\${item.gift_code}')">Xóa</button>
-            </td>
-          </tr>
-        \`;
-      }).join('');
+          return '<tr style="' + (isSelected ? 'background: var(--table-hover);' : '') + '">' +
+            '<td style="text-align: center;" onclick="event.stopPropagation()">' +
+              '<input type="checkbox" ' + (isSelected ? 'checked' : '') + ' onchange="toggleGiftItem(' + item.id + ', this.checked)">' +
+            '</td>' +
+            '<td><b>' + stt + '</b></td>' +
+            '<td><b><code>' + item.gift_code + '</code></b></td>' +
+            '<td><code>' + item.start_date + '</code></td>' +
+            '<td><code>' + item.expiration_date + '</code></td>' +
+            '<td>' + statusBadge + '</td>' +
+            '<td>' + (item.note || "-") + '</td>' +
+            '<td style="text-align: center;">' +
+              '<button type="button" class="btn btn-blue" style="padding: 4px 8px; font-size: 11px; margin-right: 4px;" onclick="openEditGiftModal(' + item.id + ')">Sửa</button>' +
+              '<button type="button" class="btn btn-red" style="padding: 4px 8px; font-size: 11px;" data-code="' + item.gift_code + '" onclick="handleDeleteGiftKey(' + item.id + ', this.dataset.code)">Xóa</button>' +
+            '</td>' +
+          '</tr>';
+        }).join('');
+      }
+
+      updateGiftBulkToolbar();
+      updateCheckAllGiftsState();
+      renderPaginationUI("giftPagination", giftPage, totalPages, totalCount, "gotoGiftPage");
+    }
+
+    async function handleBulkDeleteLicenses() {
+      if (selectedLicenseIds.size === 0) return;
+      const confirmed = await showConfirm(
+        "Xác nhận xóa hàng loạt",
+        "Bạn có chắc chắn muốn xóa vĩnh viễn " + selectedLicenseIds.size + " bản ghi đã chọn? Các file shard tương ứng sẽ được cập nhật lại.",
+        true
+      );
+      if (!confirmed) return;
+      showToast("Đang xóa " + selectedLicenseIds.size + " mục...", "info");
+      const res = await sendAdminAction({
+        action: "bulk_delete_licenses",
+        ids: Array.from(selectedLicenseIds)
+      });
+      if (res && res.success) {
+        selectedLicenseIds.clear();
+        await loadAllData();
+        showToast(res.message || "Đã xóa thành công!", "success", 6000);
+      } else {
+        showToast("Lỗi xóa hàng loạt: " + (res.error || "Không rõ"), "error", 6000);
+      }
+    }
+
+    function openBulkEditLicenseModal() {
+      if (selectedLicenseIds.size === 0) {
+        return showToast("Vui lòng chọn ít nhất 1 mục để sửa!", "warn");
+      }
+      const tbody = document.getElementById("bulkEditLicenseTbody");
+      if (!tbody) return;
+
+      const itemsToEdit = systemData.licenses.filter(function(it) { return selectedLicenseIds.has(it.id); });
+      const romOptionsHtml = (systemData.rom_categories || []).map(function(r) { return '<option value="' + r + '">' + r + '</option>'; }).join("");
+
+      tbody.innerHTML = itemsToEdit.map(function(item, idx) {
+        const stt = idx + 1;
+        return '<tr data-id="' + item.id + '" data-prefix="' + (item.prefix || "") + '">' +
+          '<td style="text-align: center; font-weight: bold;">' + stt + '</td>' +
+          '<td><input type="text" class="bulk-cell-input bulk-serial" value="' + (item.serial || "") + '" style="font-family: monospace; font-weight: bold;"></td>' +
+          '<td><select class="bulk-cell-select bulk-rom" data-selected="' + (item.rom_version || "") + '">' + romOptionsHtml + '</select></td>' +
+          '<td><select class="bulk-cell-select bulk-status">' +
+            '<option value="OK"' + (item.key_status === 'OK' ? ' selected' : '') + '>OK</option>' +
+            '<option value="DEL"' + (item.key_status === 'DEL' ? ' selected' : '') + '>DEL</option>' +
+          '</select></td>' +
+          '<td><input type="text" class="bulk-cell-input bulk-email" value="' + (item.email_phone || "") + '"></td>' +
+          '<td><select class="bulk-cell-select bulk-country">' +
+            '<option value="VN"' + (item.country === 'VN' ? ' selected' : '') + '>VN</option>' +
+            '<option value="Other"' + (item.country === 'Other' ? ' selected' : '') + '>Other</option>' +
+          '</select></td>' +
+          '<td><select class="bulk-cell-select bulk-gmail">' +
+            '<option value="NONE"' + (item.gmail_notify === 'NONE' ? ' selected' : '') + '>NONE</option>' +
+            '<option value="SENT"' + (item.gmail_notify === 'SENT' ? ' selected' : '') + '>SENT</option>' +
+          '</select></td>' +
+          '<td><input type="text" class="bulk-cell-input bulk-note" value="' + (item.note || "") + '"></td>' +
+        '</tr>';
+      }).join("");
+
+      tbody.querySelectorAll(".bulk-rom").forEach(function(sel) {
+        const val = sel.getAttribute("data-selected");
+        if (val) sel.value = val;
+      });
+
+      document.getElementById("bulkEditLicenseModal").style.display = "flex";
+    }
+
+    function closeBulkEditLicenseModal() {
+      document.getElementById("bulkEditLicenseModal").style.display = "none";
+    }
+
+    async function saveBulkEditLicenses() {
+      const tbody = document.getElementById("bulkEditLicenseTbody");
+      const rows = tbody.querySelectorAll("tr");
+      const itemsToUpdate = [];
+
+      for (const row of rows) {
+        const id = Number(row.getAttribute("data-id"));
+        const old_prefix = row.getAttribute("data-prefix") || "";
+        const serial = row.querySelector(".bulk-serial").value.trim();
+        const rom_version = row.querySelector(".bulk-rom").value;
+        const key_status = row.querySelector(".bulk-status").value;
+        const email_phone = row.querySelector(".bulk-email").value.trim();
+        const country = row.querySelector(".bulk-country").value;
+        const gmail_notify = row.querySelector(".bulk-gmail").value;
+        const note = row.querySelector(".bulk-note").value.trim();
+
+        if (!serial) {
+          return showToast("Serial không được để trống!", "warn");
+        }
+        if (!rom_version) {
+          return showToast("Vui lòng chọn Phiên bản cho tất cả các dòng!", "warn");
+        }
+
+        itemsToUpdate.push({
+          id: id,
+          serial: serial,
+          rom_version: rom_version,
+          key_status: key_status,
+          email_phone: email_phone,
+          country: country,
+          gmail_notify: gmail_notify,
+          note: note,
+          old_prefix: old_prefix
+        });
+      }
+
+      const saveBtn = document.getElementById("btnSaveBulkLicenses");
+      const origText = saveBtn.innerText;
+      saveBtn.innerText = "⏳ Đang đồng bộ...";
+      saveBtn.disabled = true;
+
+      showToast("Đang đồng bộ " + itemsToUpdate.length + " mục lên D1 và GitHub...", "info");
+
+      try {
+        const res = await sendAdminAction({
+          action: "bulk_update_licenses",
+          items: itemsToUpdate
+        });
+
+        if (res && res.success) {
+          closeBulkEditLicenseModal();
+          selectedLicenseIds.clear();
+          await loadAllData();
+          showToast(res.message || "Đã lưu và đồng bộ thành công!", "success", 7000);
+        } else {
+          showToast("Lỗi đồng bộ: " + (res.error || "Không rõ"), "error", 7000);
+        }
+      } catch (err) {
+        showToast("Lỗi kết nối: " + err.message, "error");
+      } finally {
+        saveBtn.innerText = origText;
+        saveBtn.disabled = false;
+      }
+    }
+
+    async function handleBulkDeleteGifts() {
+      if (selectedGiftIds.size === 0) return;
+      const confirmed = await showConfirm(
+        "Xác nhận xóa Gift Code",
+        "Bạn có chắc chắn muốn xóa " + selectedGiftIds.size + " mã Gift Code đã chọn?",
+        true
+      );
+      if (!confirmed) return;
+      showToast("Đang xóa " + selectedGiftIds.size + " Gift Code...", "info");
+      const res = await sendAdminAction({
+        action: "bulk_delete_gift_keys",
+        ids: Array.from(selectedGiftIds)
+      });
+      if (res && res.success) {
+        selectedGiftIds.clear();
+        await loadAllData();
+        showToast(res.message || "Đã xóa Gift Code thành công!", "success", 6000);
+      } else {
+        showToast("Lỗi xóa: " + (res.error || "Không rõ"), "error", 6000);
+      }
+    }
+
+    function openBulkEditGiftModal() {
+      if (selectedGiftIds.size === 0) {
+        return showToast("Vui lòng chọn ít nhất 1 Gift Code để sửa!", "warn");
+      }
+      const tbody = document.getElementById("bulkEditGiftTbody");
+      if (!tbody) return;
+
+      const itemsToEdit = systemData.gift_keys.filter(function(it) { return selectedGiftIds.has(it.id); });
+      tbody.innerHTML = itemsToEdit.map(function(item, idx) {
+        const stt = idx + 1;
+        return '<tr data-id="' + item.id + '">' +
+          '<td style="text-align: center; font-weight: bold;">' + stt + '</td>' +
+          '<td><input type="text" class="bulk-cell-input bulk-gift-code" value="' + (item.gift_code || "") + '" style="font-family: monospace; font-weight: bold; text-transform: uppercase;"></td>' +
+          '<td><input type="date" class="bulk-cell-input bulk-gift-start" value="' + (item.start_date || "") + '"></td>' +
+          '<td><input type="date" class="bulk-cell-input bulk-gift-exp" value="' + (item.expiration_date || "") + '"></td>' +
+          '<td><input type="text" class="bulk-cell-input bulk-gift-note" value="' + (item.note || "") + '"></td>' +
+        '</tr>';
+      }).join("");
+
+      document.getElementById("bulkEditGiftModal").style.display = "flex";
+    }
+
+    function closeBulkEditGiftModal() {
+      document.getElementById("bulkEditGiftModal").style.display = "none";
+    }
+
+    async function saveBulkEditGifts() {
+      const tbody = document.getElementById("bulkEditGiftTbody");
+      const rows = tbody.querySelectorAll("tr");
+      const itemsToUpdate = [];
+
+      for (const row of rows) {
+        const id = Number(row.getAttribute("data-id"));
+        const gift_code = row.querySelector(".bulk-gift-code").value.trim().toUpperCase();
+        const start_date = row.querySelector(".bulk-gift-start").value.trim();
+        const expiration_date = row.querySelector(".bulk-gift-exp").value.trim();
+        const note = row.querySelector(".bulk-gift-note").value.trim();
+
+        if (!gift_code) return showToast("GIFT_CODE không được để trống!", "warn");
+        if (!start_date || !expiration_date) return showToast("Vui lòng chọn đủ ngày bắt đầu và kết thúc!", "warn");
+        if (start_date > expiration_date) return showToast("Ngày bắt đầu không được lớn hơn ngày hết hạn!", "warn");
+
+        itemsToUpdate.push({ id: id, gift_code: gift_code, start_date: start_date, expiration_date: expiration_date, note: note });
+      }
+
+      const saveBtn = document.getElementById("btnSaveBulkGifts");
+      const origText = saveBtn.innerText;
+      saveBtn.innerText = "⏳ Đang đồng bộ...";
+      saveBtn.disabled = true;
+
+      showToast("Đang đồng bộ " + itemsToUpdate.length + " Gift Code lên D1 và GitHub...", "info");
+
+      try {
+        const res = await sendAdminAction({
+          action: "bulk_update_gift_keys",
+          items: itemsToUpdate
+        });
+
+        if (res && res.success) {
+          closeBulkEditGiftModal();
+          selectedGiftIds.clear();
+          await loadAllData();
+          showToast(res.message || "Đã lưu và đồng bộ Gift Code thành công!", "success", 7000);
+        } else {
+          showToast("Lỗi đồng bộ: " + (res.error || "Không rõ"), "error", 7000);
+        }
+      } catch (err) {
+        showToast("Lỗi kết nối: " + err.message, "error");
+      } finally {
+        saveBtn.innerText = origText;
+        saveBtn.disabled = false;
+      }
+    }
+
+    function openUploadModal(type) {
+      currentUploadType = type;
+      parsedImportData = [];
+      const fileInput = document.getElementById("excelFileInput");
+      if (fileInput) fileInput.value = "";
+
+      const titleEl = document.getElementById("uploadModalTitle");
+      const descEl = document.getElementById("uploadModalDesc");
+      const fileNameEl = document.getElementById("uploadFileNameText");
+      const summaryEl = document.getElementById("uploadSummaryText");
+      const confirmBtn = document.getElementById("btnConfirmUpload");
+      const previewTable = document.getElementById("uploadPreviewTable");
+
+      if (type === "license") {
+        titleEl.innerText = "📥 Upload Excel Danh sách Kích hoạt";
+        descEl.innerText = "Tải lên tệp Excel chứa danh sách bản quyền. Cần các cột từ SERIAL đến GỬI MAIL (SERIAL, PHIÊN BẢN, TRẠNG THÁI KEY, EMAIL/SĐT, QUỐC GIA, GỬI MAIL).";
+      } else {
+        titleEl.innerText = "📥 Upload Excel Danh mục Sản phẩm";
+        descEl.innerText = "Tải lên tệp Excel chứa danh mục sản phẩm. Chỉ cần 1 cột duy nhất: TÊN SẢN PHẨM.";
+      }
+
+      fileNameEl.innerText = "Nhấp để chọn tệp Excel hoặc kéo thả vào đây";
+      summaryEl.innerText = "";
+      confirmBtn.disabled = true;
+      confirmBtn.innerText = "+ Xác nhận Nhập dữ liệu";
+
+      previewTable.querySelector("thead").innerHTML = "";
+      previewTable.querySelector("tbody").innerHTML = '<tr><td style="text-align: center; color: var(--text-muted); padding: 16px;">Chưa chọn tệp tin nào.</td></tr>';
+
+      document.getElementById("uploadExcelModal").style.display = "flex";
+    }
+
+    function closeUploadModal() {
+      document.getElementById("uploadExcelModal").style.display = "none";
+      parsedImportData = [];
+    }
+
+    function handleExcelFileSelected(event) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+
+      document.getElementById("uploadFileNameText").innerText = "📄 " + file.name + " (" + (file.size / 1024).toFixed(1) + " KB)";
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          const rawRows = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+
+          if (!rawRows || rawRows.length === 0) {
+            showToast("Tệp Excel không có dữ liệu!", "warn");
+            return;
+          }
+
+          processExcelRows(rawRows);
+        } catch (err) {
+          showToast("Lỗi đọc file Excel: " + err.message, "error");
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function normalizeHeaderKey(key) {
+      return String(key || "")
+        .trim()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]/g, "");
+    }
+
+    function processExcelRows(rawRows) {
+      const previewTable = document.getElementById("uploadPreviewTable");
+      const summaryEl = document.getElementById("uploadSummaryText");
+      const confirmBtn = document.getElementById("btnConfirmUpload");
+
+      if (currentUploadType === "license") {
+        const validItems = [];
+
+        rawRows.forEach(function(row) {
+          let serial = "", rom = "", status = "OK", email = "", country = "VN", gmail = "NONE", note = "";
+
+          for (const rawKey of Object.keys(row)) {
+            const normKey = normalizeHeaderKey(rawKey);
+            const val = String(row[rawKey] || "").trim();
+
+            if (normKey === "serial" || normKey === "imei") serial = val;
+            else if (normKey.indexOf("phienban") !== -1 || normKey.indexOf("rom") !== -1 || normKey.indexOf("sanpham") !== -1) rom = val;
+            else if (normKey.indexOf("trangthai") !== -1 || normKey === "status") status = val || "OK";
+            else if (normKey.indexOf("email") !== -1 || normKey.indexOf("sdt") !== -1 || normKey.indexOf("phone") !== -1) email = val;
+            else if (normKey.indexOf("quocgia") !== -1 || normKey === "country") country = val || "VN";
+            else if (normKey.indexOf("guimail") !== -1 || normKey.indexOf("mailnotify") !== -1) gmail = val || "NONE";
+            else if (normKey.indexOf("ghichu") !== -1 || normKey === "note") note = val;
+          }
+
+          if (serial && rom) {
+            validItems.push({
+              serial: serial,
+              rom_version: rom,
+              key_status: status.toUpperCase() === "DEL" ? "DEL" : "OK",
+              email_phone: email,
+              country: country.toUpperCase() === "OTHER" ? "Other" : "VN",
+              gmail_notify: gmail.toUpperCase() === "SENT" ? "SENT" : "NONE",
+              note: note
+            });
+          }
+        });
+
+        parsedImportData = validItems;
+
+        if (validItems.length === 0) {
+          summaryEl.innerText = "❌ Không tìm thấy dòng nào có đủ cột SERIAL và PHIÊN BẢN!";
+          summaryEl.style.color = "#ef4444";
+          confirmBtn.disabled = true;
+          return;
+        }
+
+        summaryEl.innerText = "✅ Đã tìm thấy " + validItems.length + " bản ghi hợp lệ sẵn sàng nhập.";
+        summaryEl.style.color = "#0284c7";
+        confirmBtn.disabled = false;
+
+        const previewRows = validItems.slice(0, 5);
+        previewTable.querySelector("thead").innerHTML = '<tr><th>STT</th><th>SERIAL</th><th>PHIÊN BẢN</th><th>TRẠNG THÁI</th><th>EMAIL/SĐT</th><th>QUỐC GIA</th><th>GỬI MAIL</th></tr>';
+        previewTable.querySelector("tbody").innerHTML = previewRows.map(function(it, idx) {
+          return '<tr>' +
+            '<td>' + (idx + 1) + '</td>' +
+            '<td><code>' + it.serial + '</code></td>' +
+            '<td>' + it.rom_version + '</td>' +
+            '<td>' + it.key_status + '</td>' +
+            '<td>' + (it.email_phone || '-') + '</td>' +
+            '<td>' + it.country + '</td>' +
+            '<td>' + it.gmail_notify + '</td>' +
+          '</tr>';
+        }).join("");
+      } else {
+        const validNames = new Set();
+
+        rawRows.forEach(function(row) {
+          for (const rawKey of Object.keys(row)) {
+            const normKey = normalizeHeaderKey(rawKey);
+            const val = String(row[rawKey] || "").trim();
+            if (normKey.indexOf("tensanpham") !== -1 || normKey.indexOf("sanpham") !== -1 || normKey.indexOf("rom") !== -1 || normKey.indexOf("product") !== -1 || normKey.indexOf("name") !== -1) {
+              if (val) validNames.add(val);
+            }
+          }
+        });
+
+        if (validNames.size === 0) {
+          rawRows.forEach(function(row) {
+            const firstKey = Object.keys(row)[0];
+            const val = String(row[firstKey] || "").trim();
+            if (val) validNames.add(val);
+          });
+        }
+
+        parsedImportData = Array.from(validNames);
+
+        if (parsedImportData.length === 0) {
+          summaryEl.innerText = "❌ Không tìm thấy tên sản phẩm nào trong tệp!";
+          summaryEl.style.color = "#ef4444";
+          confirmBtn.disabled = true;
+          return;
+        }
+
+        summaryEl.innerText = "✅ Đã tìm thấy " + parsedImportData.length + " sản phẩm sẵn sàng nhập.";
+        summaryEl.style.color = "#0284c7";
+        confirmBtn.disabled = false;
+
+        const previewRows = parsedImportData.slice(0, 5);
+        previewTable.querySelector("thead").innerHTML = '<tr><th style="width: 50px;">STT</th><th>TÊN SẢN PHẨM</th></tr>';
+        previewTable.querySelector("tbody").innerHTML = previewRows.map(function(name, idx) {
+          return '<tr><td>' + (idx + 1) + '</td><td><b><code>' + name + '</code></b></td></tr>';
+        }).join("");
+      }
+    }
+
+    function downloadSampleExcel() {
+      if (typeof XLSX === "undefined") {
+        return showToast("Thư viện SheetJS chưa được tải xong, vui lòng thử lại sau giây lát!", "warn");
+      }
+
+      if (currentUploadType === "license") {
+        const sampleData = [
+          {
+            "SERIAL": "G6AY8400E7W",
+            "PHIÊN BẢN": (systemData.rom_categories && systemData.rom_categories[0]) || "PRO_V1",
+            "TRẠNG THÁI KEY": "OK",
+            "EMAIL/SĐT": "khachhang1@gmail.com",
+            "QUỐC GIA": "VN",
+            "GỬI MAIL": "NONE",
+            "GHI CHÚ": "Kích hoạt ngày 16/10"
+          },
+          {
+            "SERIAL": "A9BX1200Z4K",
+            "PHIÊN BẢN": (systemData.rom_categories && systemData.rom_categories[0]) || "PRO_V1",
+            "TRẠNG THÁI KEY": "OK",
+            "EMAIL/SĐT": "khachhang2@gmail.com",
+            "QUỐC GIA": "Other",
+            "GỬI MAIL": "NONE",
+            "GHI CHÚ": "Bản quốc tế"
+          }
+        ];
+        const ws = XLSX.utils.json_to_sheet(sampleData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "DanhSachKichHoat");
+        XLSX.writeFile(wb, "Mau_Danh_Sach_Kich_Hoat.xlsx");
+      } else {
+        const sampleData = [
+          { "TÊN SẢN PHẨM": "Bản quyền Pro V1.0" },
+          { "TÊN SẢN PHẨM": "Bản quyền VIP V2.0" }
+        ];
+        const ws = XLSX.utils.json_to_sheet(sampleData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "SanPham");
+        XLSX.writeFile(wb, "Mau_Danh_Muc_San_Pham.xlsx");
+      }
+    }
+
+    async function executeBulkImport() {
+      if (!parsedImportData || parsedImportData.length === 0) return;
+
+      const confirmBtn = document.getElementById("btnConfirmUpload");
+      const origText = confirmBtn.innerText;
+      confirmBtn.innerText = "⏳ Đang nhập dữ liệu...";
+      confirmBtn.disabled = true;
+
+      showToast("Đang nhập dữ liệu vào hệ thống...", "info");
+
+      try {
+        let res;
+        if (currentUploadType === "license") {
+          res = await sendAdminAction({
+            action: "bulk_import_licenses",
+            items: parsedImportData
+          });
+        } else {
+          res = await sendAdminAction({
+            action: "bulk_import_roms",
+            names: parsedImportData
+          });
+        }
+
+        if (res && res.success) {
+          closeUploadModal();
+          await loadAllData();
+          showToast(res.message || "Đã nhập dữ liệu thành công!", "success", 7000);
+        } else {
+          showToast("Lỗi nhập dữ liệu: " + (res.error || "Không rõ"), "error", 7000);
+        }
+      } catch (err) {
+        showToast("Lỗi kết nối: " + err.message, "error");
+      } finally {
+        confirmBtn.innerText = origText;
+        confirmBtn.disabled = false;
+      }
     }
 
     function openCreateGiftModal() {
