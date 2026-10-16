@@ -175,7 +175,7 @@ export default {
         }
 
         if (device.key_status !== "OK") {
-          return jsonResponse({ success: false, message: "Bản quyền đang bị ngưng hoặc đã xóa" }, 403);
+          return jsonResponse({ success: false, message: "Kích hoạt đang bị ngưng hoặc đã xóa" }, 403);
         }
 
         if (device.gmail_notify === "NONE" && device.email_phone && device.email_phone.includes("@")) {
@@ -356,7 +356,7 @@ export default {
             gitNotice = ` (Lưu ý GitHub: ${gitRes.error})`;
           }
         }
-        return jsonResponse({ success: true, message: `Đã xóa bản quyền thành công!${gitNotice}` });
+        return jsonResponse({ success: true, message: `Đã xóa kích hoạt thành công!${gitNotice}` });
       }
       else if (action === "reindex_all_prefixes") {
         await ensureDbSchema(env);
@@ -1003,7 +1003,7 @@ function renderAdminHTML() {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>MRD Team - Quản Lý Bản Quyền</title>
+  <title>MRD Team - Quản Lý Kích hoạt Thiết bị</title>
   <style>
     :root[data-theme="light"] {
       --bg-body: #f8fafc;
@@ -1341,10 +1341,10 @@ function renderAdminHTML() {
       <span style="font-size: 14px; cursor: pointer; color: var(--text-muted); display: none;" id="closeSidebarBtn" onclick="toggleSidebar(false)">✕</span>
     </div>
     <ul class="nav-list">
-      <li class="nav-item active" onclick="switchTab('listTab', this)">📋 Danh sách</li>
-      <li class="nav-item" onclick="switchTab('createTab', this)">➕ Tạo KEY mới</li>
+      <li class="nav-item active" onclick="switchTab('listTab', this)">📋 Danh sách Kích hoạt</li>
+      <li class="nav-item" onclick="switchTab('createTab', this)">➕ Kích hoạt mới</li>
       <li class="nav-item" onclick="switchTab('giftTab', this)">🎁 Gift Code</li>
-      <li class="nav-item" onclick="switchTab('romTab', this)">📁 Danh mục Sản phẩm</li>
+      <li class="nav-item" onclick="switchTab('romTab', this)">📁 Sản phẩm</li>
     </ul>
     
     <div class="sidebar-footer">
@@ -1382,7 +1382,7 @@ function renderAdminHTML() {
     <div class="topbar">
       <div class="topbar-left">
         <button class="menu-toggle-btn" onclick="toggleSidebar(true)">☰</button>
-        <div style="font-size: 17px; font-weight: bold;" id="topbarTitle">Danh sách Bản quyền</div>
+        <div style="font-size: 17px; font-weight: bold;" id="topbarTitle">Danh sách Kích hoạt</div>
       </div>
       <div class="topbar-right" style="display: flex; align-items: center; gap: 10px;">
         <button class="btn btn-blue" id="btnSyncShards" style="padding: 6px 14px; font-size: 12px; border-radius: 20px;" onclick="handleSyncAllPrefixes()" title="Tính toán lại Prefix và đồng bộ cache phân mảnh">🔄 Đồng bộ Shards</button>
@@ -1419,13 +1419,13 @@ function renderAdminHTML() {
               <tr>
                 <th>STT</th>
                 <th>SERIAL</th>
-                <th>ROM_VERSION</th>
-                <th>KEY_STATUS</th>
-                <th>EMAIL/PHONE</th>
-                <th>COUNTRY</th>
-                <th>GMAIL_NOTIFY</th>
-                <th>SHARD (FILE)</th>
-                <th>NOTE</th>
+                <th>PHIÊN BẢN</th>
+                <th>TRẠNG THÁI KEY</th>
+                <th>EMAIL/SĐT</th>
+                <th>QUỐC GIA</th>
+                <th>GỬI MAIL</th>
+                <th>JSON</th>
+                <th>GHI CHÚ</th>
               </tr>
             </thead>
             <tbody id="licenseTableBody">
@@ -1444,11 +1444,11 @@ function renderAdminHTML() {
           <input type="text" id="addSerial" placeholder="Ví dụ: G6AY8400E7W">
         </div>
         <div class="form-group">
-          <label>ROM_VERSION (*)</label>
+          <label>PHIÊN BẢN (*)</label>
           <select id="addRomSelect"></select>
         </div>
         <div class="form-group">
-          <label>KEY_STATUS</label>
+          <label>TRẠNG THÁI KEY</label>
           <select id="addStatus">
             <option value="OK">OK (Kích hoạt)</option>
             <option value="OFF">OFF (Ngưng)</option>
@@ -1456,21 +1456,21 @@ function renderAdminHTML() {
           </select>
         </div>
         <div class="form-group">
-          <label>EMAIL / PHONE</label>
+          <label>EMAIL/SĐT</label>
           <input type="text" id="addEmail" placeholder="Nhập Email hoặc SĐT khách">
         </div>
         <div class="form-group">
-          <label>COUNTRY</label>
+          <label>QUỐC GIA</label>
           <select id="addCountry">
             <option value="VN">VN (Gửi mail tiếng Việt)</option>
             <option value="Other">Other (Gửi mail tiếng Anh)</option>
           </select>
         </div>
         <div class="form-group">
-          <label>NOTE</label>
+          <label>GHI CHÚ</label>
           <input type="text" id="addNote" placeholder="Ghi chú thiết bị/khách hàng">
         </div>
-        <button class="btn btn-green" style="width: 100%;" onclick="handleCreateLicense()">+ Thêm Bản Quyền</button>
+        <button class="btn btn-green" style="width: 100%;" onclick="handleCreateLicense()">+ Thêm Kích hoạt</button>
       </div>
     </div>
 
@@ -1504,9 +1504,8 @@ function renderAdminHTML() {
               <span class="badge badge-shard">🚀 json/giftcode.json</span>
             </a>
           </div>
-          <div style="display: flex; gap: 8px;">
-            <button class="btn btn-blue" style="padding: 7px 12px; font-size: 12px;" onclick="handleSyncGiftCode()">🔄 Đồng bộ Giftcode</button>
-            <button class="btn btn-green" style="padding: 7px 12px; font-size: 12px;" onclick="openCreateGiftModal()">+ Tạo Gift Code</button>
+          <div>
+            <button class="btn btn-green" style="padding: 7px 14px; font-size: 12px;" onclick="openCreateGiftModal()">+ Tạo Gift Code</button>
           </div>
         </div>
       </div>
@@ -1517,11 +1516,11 @@ function renderAdminHTML() {
             <thead>
               <tr>
                 <th style="width: 50px;">STT</th>
-                <th>GIFT_CODE</th>
-                <th>START_DATE</th>
-                <th>EXPIRATION_DATE</th>
-                <th>KEY_STATUS</th>
-                <th>NOTE</th>
+                <th>GIFT CODE</th>
+                <th>NGÀY TẠO</th>
+                <th>NGÀY HẾT HẠN</th>
+                <th>TRẠNG THÁI KEY</th>
+                <th>GHI CHÚ</th>
                 <th style="width: 140px; text-align: center;">ACTIONS</th>
               </tr>
             </thead>
@@ -1544,28 +1543,28 @@ function renderAdminHTML() {
       
       <input type="hidden" id="giftId">
       <div class="form-group">
-        <label>GIFT_CODE (*)</label>
+        <label>GIFT CODE (*)</label>
         <div style="display: flex; gap: 8px;">
           <input type="text" id="giftCodeInput" placeholder="Ví dụ: VIP2026XYZ" style="flex: 1;">
           <button type="button" class="btn btn-gray" style="white-space: nowrap; font-size: 12px; padding: 0 10px;" onclick="generateRandomGiftCode()">🎲 Tạo mã</button>
         </div>
       </div>
       <div class="form-group">
-        <label>START_DATE (YYYY-MM-DD) (*)</label>
+        <label>NGÀY TẠO (YYYY-MM-DD) (*)</label>
         <input type="date" id="giftStartDate">
       </div>
       <div class="form-group">
-        <label>EXPIRATION_DATE (YYYY-MM-DD) (*)</label>
+        <label>NGÀY HẾT HẠN (YYYY-MM-DD) (*)</label>
         <input type="date" id="giftExpDate">
       </div>
       <div class="form-group">
-        <label>NOTE</label>
+        <label>GHI CHÚ</label>
         <input type="text" id="giftNote" placeholder="Ghi chú người nhận hoặc sự kiện...">
       </div>
       
       <div class="modal-actions" style="margin-top: 20px; display: flex; justify-content: flex-end; gap: 10px;">
         <button class="btn btn-gray" onclick="closeGiftModal()">Hủy</button>
-        <button class="btn btn-green" id="btnSaveGift" onclick="handleSaveGiftKey()">Lưu Gift Code</button>
+        <button class="btn btn-green" id="btnSaveGift" onclick="handleSaveGiftKey()">Lưu</button>
       </div>
     </div>
   </div>
@@ -1591,11 +1590,11 @@ function renderAdminHTML() {
         <input type="text" id="editSerial" disabled>
       </div>
       <div class="form-group">
-        <label>ROM_VERSION</label>
+        <label>PHIÊN BẢN</label>
         <select id="editRomSelect" disabled></select>
       </div>
       <div class="form-group">
-        <label>KEY_STATUS</label>
+        <label>TRẠNG THÁI KEY</label>
         <select id="editStatus" disabled>
           <option value="OK">OK (Kích hoạt)</option>
           <option value="OFF">OFF (Ngưng kích hoạt)</option>
@@ -1603,18 +1602,18 @@ function renderAdminHTML() {
         </select>
       </div>
       <div class="form-group">
-        <label>EMAIL / PHONE</label>
+        <label>EMAIL/SĐT</label>
         <input type="text" id="editEmail" disabled>
       </div>
       <div class="form-group">
-        <label>COUNTRY</label>
+        <label>QUỐC GIA</label>
         <select id="editCountry" disabled>
           <option value="VN">VN</option>
           <option value="Other">Other</option>
         </select>
       </div>
       <div class="form-group">
-        <label>NOTE</label>
+        <label>GHI CHÚ</label>
         <input type="text" id="editNote" disabled>
       </div>
 
@@ -1758,8 +1757,8 @@ function renderAdminHTML() {
       el.classList.add("active");
 
       const titles = {
-        listTab: "Danh sách Bản quyền",
-        createTab: "Tạo mới Bản quyền",
+        listTab: "Danh sách Kích hoạt",
+        createTab: "Kích hoạt mới",
         giftTab: "Quản lý Gift Code",
         romTab: "Quản lý Sản phẩm"
       };
@@ -1767,7 +1766,7 @@ function renderAdminHTML() {
 
       const syncBtn = document.getElementById("btnSyncShards");
       if (syncBtn) {
-        syncBtn.style.display = (tabId === "listTab" || tabId === "giftTab") ? "inline-flex" : "none";
+        syncBtn.style.display = (tabId === "listTab") ? "inline-flex" : "none";
       }
 
       if (window.innerWidth <= 768) toggleSidebar(false);
