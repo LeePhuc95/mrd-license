@@ -14,7 +14,7 @@ export default {
     // =========================================================================
     // 0. BỘ ĐẾM TOÀN DIỆN MỌI REQUEST CỦA PROJECT LICENSE (CHẠY NỀN QUA ctx.waitUntil)
     // =========================================================================
-    if (env.DB) {
+    if (env.DB && url.pathname !== "/api/admin/version") {
       ctx.waitUntil(
         env.DB.prepare(`
           INSERT INTO system_stats (date_key, service_type, req_count)
@@ -223,15 +223,17 @@ export default {
       await ensureDbSchema(env);
       const MAX_LICENSE_REQ = 50000; // Trần 50.000 req dành riêng cho License
 
-      // Truy vấn đồng thời dữ liệu bản quyền, ROM, request quota và Gift keys
-      const [licensesRes, romsRes, statsRes, giftKeysRes] = await Promise.all([
+      // Truy vấn đồng thời dữ liệu bản quyền, ROM, request quota, Gift keys và phiên bản DB
+      const [licensesRes, romsRes, statsRes, giftKeysRes, versionRes] = await Promise.all([
         env.DB.prepare("SELECT * FROM licenses ORDER BY id DESC").all(),
         env.DB.prepare("SELECT * FROM rom_categories ORDER BY name ASC").all(),
         env.DB.prepare("SELECT req_count FROM system_stats WHERE date_key = ? AND service_type = 'LICENSE'").bind(today).first(),
-        env.DB.prepare("SELECT * FROM gift_keys ORDER BY created_at DESC").all()
+        env.DB.prepare("SELECT * FROM gift_keys ORDER BY created_at DESC").all(),
+        env.DB.prepare("SELECT req_count FROM system_stats WHERE date_key = 'SYSTEM' AND service_type = 'DB_VERSION'").first()
       ]);
 
       const licenseUsage = statsRes ? (statsRes.req_count || 0) : 0;
+      const currentDbVersion = versionRes ? (versionRes.req_count || 0) : 0;
       const licensesList = (licensesRes.results || []).map(item => ({
         ...item,
         prefix: item.prefix || getDevicePrefix(item.serial)
@@ -243,6 +245,7 @@ export default {
         gift_keys: giftKeysRes?.results || [],
         github_repo: env.GITHUB_REPO ? String(env.GITHUB_REPO).trim() : '',
         pages_domain: env.PAGES_DOMAIN ? env.PAGES_DOMAIN.replace(/\/+$/, '') : '',
+        db_version: currentDbVersion,
         license_quota: {
           limit: MAX_LICENSE_REQ,
           used: licenseUsage,
@@ -251,11 +254,37 @@ export default {
       });
     }
 
+    if (url.pathname === "/api/admin/version" && request.method === "GET") {
+      if (!isAuthed) return jsonResponse({ error: "Unauthorized" }, 401);
+      if (!env.DB) return jsonResponse({ success: true, version: 0 });
+
+      const versionRes = await env.DB.prepare(
+        "SELECT req_count FROM system_stats WHERE date_key = 'SYSTEM' AND service_type = 'DB_VERSION'"
+      ).first();
+
+      return jsonResponse({
+        success: true,
+        version: versionRes ? (versionRes.req_count || 0) : 0
+      });
+    }
+
     if (url.pathname === "/api/admin/action" && request.method === "POST") {
       if (!isAuthed) return jsonResponse({ error: "Unauthorized" }, 401);
 
       const body = await request.json();
       const { action } = body;
+
+      const mutatingActions = new Set([
+        "create_license", "update_license", "delete_license",
+        "create_gift_key", "update_gift_key", "delete_gift_key",
+        "add_rom", "delete_rom",
+        "bulk_delete_licenses", "bulk_update_licenses", "bulk_import_licenses",
+        "bulk_delete_gift_keys", "bulk_update_gift_keys",
+        "bulk_import_roms"
+      ]);
+      if (mutatingActions.has(action)) {
+        ctx.waitUntil(bumpDbVersion(env));
+      }
 
       if (action === "create_license") {
         const { serial, rom_version, key_status, email_phone, country, note } = body;
@@ -744,6 +773,24 @@ export default {
 };
 
 let schemaChecked = false;
+
+/**
+ * Cập nhật timestamp phiên bản cơ sở dữ liệu khi có thay đổi (dùng để đồng bộ đa thiết bị)
+ */
+async function bumpDbVersion(env) {
+  if (!env?.DB) return;
+  const now = Date.now();
+  try {
+    await env.DB.prepare(`
+      INSERT INTO system_stats (date_key, service_type, req_count)
+      VALUES ('SYSTEM', 'DB_VERSION', ?)
+      ON CONFLICT(date_key, service_type) DO UPDATE SET req_count = ?
+    `).bind(now, now).run();
+  } catch (e) {
+    console.error("Lỗi bumpDbVersion:", e);
+  }
+}
+
 async function ensureDbSchema(env) {
   if (schemaChecked || !env?.DB) return;
 
@@ -1393,6 +1440,14 @@ function renderAdminHTML() {
       display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s;
     }
     .theme-toggle-btn:hover { background: var(--table-hover); }
+    @keyframes iconSpin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .sync-icon { display: inline-block; transition: transform 0.2s ease; }
+    .sync-icon.spinning {
+      animation: iconSpin 0.7s linear infinite;
+    }
     .theme-dropdown-menu {
       position: absolute; top: calc(100% + 6px); right: 0; min-width: 160px;
       background: var(--dropdown-bg); border: 1px solid var(--dropdown-border);
@@ -1633,8 +1688,8 @@ function renderAdminHTML() {
       .topbar-left { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
       #topbarTitle { font-size: 15px; font-weight: 700; max-width: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .topbar-right { gap: 6px !important; flex-shrink: 0; }
-      #themeBtn { padding: 5px 8px; font-size: 12px; }
-      #themeBtnText { display: none; }
+      #btnSyncData, #themeBtn { padding: 5px 8px; font-size: 12px; }
+      #syncDataText, #themeBtnText { display: none; }
       
       .tab-content { padding: 10px 8px; }
       .card { padding: 14px 12px; border-radius: 10px; }
@@ -1780,6 +1835,10 @@ function renderAdminHTML() {
         <div style="font-size: 17px; font-weight: bold;" id="topbarTitle">Quản lý Kích hoạt</div>
       </div>
       <div class="topbar-right" style="display: flex; align-items: center; gap: 8px;">
+        <button class="theme-toggle-btn" id="btnSyncData" onclick="manualSyncData()" title="Đồng bộ dữ liệu mới nhất từ máy chủ">
+          <span id="syncDataIcon" class="sync-icon">🔄</span>
+          <span id="syncDataText">Đồng bộ dữ liệu</span>
+        </button>
         <div class="theme-dropdown-container">
           <button class="theme-toggle-btn" id="themeBtn" onclick="toggleThemeDropdown(event)" title="Chọn giao diện">
             <span id="themeBtnIcon">🌙</span>
@@ -1964,7 +2023,7 @@ function renderAdminHTML() {
                 <th style="width: 120px;">NGÀY HẾT HẠN</th>
                 <th style="width: 110px;">TRẠNG THÁI KEY</th>
                 <th class="col-note">GHI CHÚ</th>
-                <th class="col-actions">ACTIONS</th>
+                <th class="col-actions">HÀNH ĐỘNG</th>
               </tr>
             </thead>
             <tbody id="giftTableBody">
@@ -2412,7 +2471,69 @@ function renderAdminHTML() {
       document.getElementById("topbarTitle").innerText = titles[tabId] || "";
 
       if (window.innerWidth <= 768) toggleSidebar(false);
+
+      if (tabId === "listTab" || tabId === "giftTab") {
+        checkAndSyncIfNewer(tabId);
+      }
     }
+
+    let clientDbVersion = 0;
+    let isCheckingVersion = false;
+
+    /**
+     * Tự động kiểm tra phiên bản DB siêu nhẹ (0 tốn req quota) và cập nhật dữ liệu khi phát hiện thay đổi từ thiết bị khác
+     */
+    async function checkAndSyncIfNewer(sourceTab) {
+      if (!currentAuthToken || isCheckingVersion) return;
+      isCheckingVersion = true;
+      try {
+        const res = await fetch("/api/admin/version", {
+          headers: { "Authorization": "Bearer " + currentAuthToken }
+        });
+        if (res.status === 401) return logout();
+        if (res.ok) {
+          const data = await res.json();
+          if (data.version && data.version > clientDbVersion) {
+            console.log("Phát hiện dữ liệu mới trên máy chủ (version:", data.version, ">", clientDbVersion, "), đang đồng bộ...");
+            clientDbVersion = data.version;
+            await loadAllData();
+            showToast("Đã tự động cập nhật dữ liệu mới nhất!", "info");
+          }
+        }
+      } catch (e) {
+        console.warn("Lỗi kiểm tra phiên bản:", e);
+      } finally {
+        isCheckingVersion = false;
+      }
+    }
+
+    /**
+     * Nút bấm Đồng bộ dữ liệu thủ công trên Topbar
+     */
+    async function manualSyncData() {
+      const icon = document.getElementById("syncDataIcon");
+      const btn = document.getElementById("btnSyncData");
+      if (btn) btn.disabled = true;
+      if (icon) icon.classList.add("spinning");
+      try {
+        await loadAllData();
+        showToast("Đã đồng bộ dữ liệu mới nhất thành công!", "success");
+      } catch (err) {
+        showToast("Lỗi đồng bộ dữ liệu: " + err.message, "error");
+      } finally {
+        if (icon) icon.classList.remove("spinning");
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        const activeTab = document.querySelector(".tab-content.active")?.id;
+        if (activeTab === "listTab" || activeTab === "giftTab") {
+          checkAndSyncIfNewer("visibility");
+        }
+      }
+    });
 
     async function verifyLogin() {
       const pwd = document.getElementById("authPasswordInput").value.trim();
@@ -2475,6 +2596,9 @@ function renderAdminHTML() {
         if (res.status === 401) return logout();
 
         systemData = await res.json();
+        if (systemData.db_version) {
+          clientDbVersion = systemData.db_version;
+        }
         if (systemData.error) {
           showToast(systemData.error, "warn");
         }
@@ -2486,20 +2610,26 @@ function renderAdminHTML() {
       // CẬP NHẬT WIDGET ĐẾM REQUEST LICENSE
       if (systemData.license_quota) {
         const q = systemData.license_quota;
-        const percent = ((q.remaining / q.limit) * 100).toFixed(0);
+        const exactPercent = (q.remaining / q.limit) * 100;
+        let displayPercent = exactPercent.toFixed(1);
+        if (q.used > 0 && exactPercent > 99.9) {
+          displayPercent = "99.9";
+        } else if (exactPercent >= 100 || q.used === 0) {
+          displayPercent = "100";
+        }
         
         document.getElementById("quotaRemainingText").innerText = 
           q.remaining.toLocaleString() + " / " + q.limit.toLocaleString();
-        document.getElementById("quotaPercent").innerText = percent + "%";
+        document.getElementById("quotaPercent").innerText = displayPercent + "%";
         document.getElementById("quotaUsedText").innerText = 
           "Đã dùng hôm nay: " + q.used.toLocaleString() + " req";
         
         const bar = document.getElementById("quotaProgress");
-        bar.style.width = percent + "%";
+        bar.style.width = Math.min(100, Math.max(0, exactPercent)).toFixed(2) + "%";
         
-        if (percent <= 20) {
+        if (exactPercent <= 20) {
           bar.style.background = "#ef4444";
-        } else if (percent <= 50) {
+        } else if (exactPercent <= 50) {
           bar.style.background = "#f59e0b";
         } else {
           bar.style.background = "#38bdf8";
