@@ -6,6 +6,31 @@
  *   Mã hóa XOR
  */
 
+
+// =========================================================================
+// PWA (PROGRESSIVE WEB APP) ICONS & ASSETS
+// =========================================================================
+const PWA_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1e293b" />
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#2563eb" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)" />
+  <circle cx="256" cy="190" r="58" fill="none" stroke="url(#accent)" stroke-width="20" />
+  <circle cx="256" cy="190" r="22" fill="url(#accent)" />
+  <path d="M256 248 L256 360 M256 300 L292 300 M256 335 L284 335" stroke="url(#accent)" stroke-width="18" stroke-linecap="round" />
+  <text x="256" y="435" font-family="system-ui, -apple-system, sans-serif" font-size="42" font-weight="800" fill="#f8fafc" text-anchor="middle" letter-spacing="4">MRD ADMIN</text>
+</svg>`;
+
+const PWA_ICON_192_B64 = "iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAYAAABS3GwHAAAE4ElEQVR42u3aUVdUVRjH4f0NMtAERsgsxQABwwiiLMJMIk36vn0v7t4WKo3TkmkGzx7OOe+z13puh7P2/v9uXJbSofPJ7bWgG4pj3IjE4BHEcPTrAZPo1/AX1gOuwvChayF4MFKGcGNhPWAWWjj+jYBZMn5EYPhwDSG4dNJGcGPxUUAbGT8iMH5EYPyIQAAIoIHxbwZ0kfEjAuNHBFc4ny5tBvSB8SOC6QLYCugT40cEAkAAxo8IBIAARsc/2A7IQAAIQAAIwPgRgQBIHsDc4HFAJgJAAMZP+gjm7jwO6tv7+2xi7ms23gXwTdC8aQb//0G4zxoE0OLRi0EAhi8EARi+EARg+EKoF8BOMLk2jn8YgfeZhgB6NH4RXCGAueWdYDJdGP+/EXiviQigh+MXwRQBzC/vBON1cfwXvN94ZX75SXC5Lo9/GIF3vIwAej5+EQgg/fhFIID04xfBZQGsPAlG9ToA7zuizK98Gwz1efzDCLzzBQEIQADkGb8IBNCKANr49wVg/K0ZnQhmFsBusFt5aP37rr4QQAdGJoKKAdz8fDeyqzWubN/YRQKoNK7M39mxAL6L7JoflW/timL8Z6kDyB6BADo4JgEIQAACEEDbxuS7OxnAXmTW7JB8d9eUm3f3IrNGh+S7O0cAAhCAAOoMqau/LQABCCBPAPuRWbND6sdvZ1Ju3d2PzJr+N/Vavz2rb85GAAJIHsAX+5FZ42Oq9Nuz+uZs0gdQc1Bt/83s438XwPeRXY3/Ydn079b8zswEIAABCOAsLQEIIG0E3l0AAhDAQXCQNADvXm7dOwjeSjV+7/2GAAQgAHJF4J3fC+Czez8Eo/o8fu87SgACEAA5IvCuAkgbgfcUgAD4QABf/hhcrhfj946XEkDPI/B+AkgbgXcTQNoIvJcAUobgfaYO4GkwvXaO37tMSwA9icB7XDGA2189DT7OdQ7f/X8cAXQ0BPctgHQxuNcqAfwU1NHs+N1nDQIQgAAQgAAQgAAQQLYA7v8c1NFoAO6zCgEIQAAIQAAIIGcAh0EdzQbgPmsoC/cPgzqaDMB91iEAAQiA9gcgnFoBPDgM6mhFAN5hrLLw4JegjnYE4B3GEYAABIAABIAABIAA0gVwFNTRjgC8wzgCEEDyAFaPgjpaEYB3GEsAHQnAfVYKYHH1KKijyQDcZx1lcfVZUEezAbjPGgQgAAEgAAEggJQBPHwW1NFoAO6zirL48NegjmYDcJ81CEAAAqD9AQhHAAIQQI0Angd1tCMA7zCOAAQgAASQNoClr58HdbQhAO8wngAEkD2A34I62hGAdxhHAAIQAAIQAAgA0gXwIiCrsrT2IiArASAAEADkDOA4IKsyWDsOyEoA5A7g/AzWjwMyEgACGKz/HpCRABCAi0AAkDeAk4CMBIAABhsnARmVi+MySDv+83Nn4yQgk/8E8EdAJgJAACLA+AWAAARA8gDeRPDoZUCflXHHBZE6ABGQevwCIH0AIiD1+N8G8CqgT8q0x6WRdvznZ3nzVUAflKsel0fa8YuA9OMfRvBnQJeUJo8LJXUAIiD1+EVA+vEPI3gd0EZlVmd563VAm5RZH5dO2vELgfTDFwHGPxLBacAslDafla3TgBpKl44HI+XwhYDhfyiE7dOASZS+n5XtvwLeVzIfAzD46zj/AGOrhOKLsoiPAAAAAElFTkSuQmCC";
+const PWA_ICON_512_B64 = "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";
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -543,8 +568,109 @@ export default {
     }
 
     // =========================================================================
-    // 4. GIAO DIỆN WEB ADMIN (/admin)
+    // 4. GIAO DIỆN WEB ADMIN (/admin) & PWA (WEB APP INSTALLATION)
     // =========================================================================
+    if (url.pathname === "/" || url.pathname === "") {
+      return Response.redirect(new URL("/admin", request.url).toString(), 302);
+    }
+
+    if (url.pathname === "/manifest.webmanifest" || url.pathname === "/manifest.json") {
+      const manifest = {
+        name: "MRD Team - Quản Lý Bản Quyền",
+        short_name: "MRD Admin",
+        description: "Hệ thống quản lý bản quyền và kích hoạt thiết bị MRD Team",
+        start_url: "/admin",
+        scope: "/",
+        display: "standalone",
+        orientation: "any",
+        background_color: "#0f172a",
+        theme_color: "#0f172a",
+        icons: [
+          {
+            src: "/icon.svg",
+            sizes: "192x192 512x512",
+            type: "image/svg+xml",
+            purpose: "any maskable"
+          },
+          {
+            src: "/icon-192.png",
+            sizes: "192x192",
+            type: "image/png",
+            purpose: "any maskable"
+          },
+          {
+            src: "/icon-512.png",
+            sizes: "512x512",
+            type: "image/png",
+            purpose: "any maskable"
+          }
+        ]
+      };
+      return new Response(JSON.stringify(manifest), {
+        headers: {
+          "Content-Type": "application/manifest+json; charset=utf-8",
+          "Cache-Control": "public, max-age=86400"
+        }
+      });
+    }
+
+    if (url.pathname === "/sw.js") {
+      const swCode = `// Service Worker cho PWA MRD Admin
+const CACHE_NAME = 'mrd-admin-sw-v1';
+self.addEventListener('install', (e) => {
+  self.skipWaiting();
+});
+self.addEventListener('activate', (e) => {
+  e.waitUntil(self.clients.claim());
+});
+self.addEventListener('fetch', (e) => {
+  // Pass-through to network, fallback to cache if offline
+  e.respondWith(
+    fetch(e.request).catch(() => caches.match(e.request))
+  );
+});
+`;
+      return new Response(swCode, {
+        headers: {
+          "Content-Type": "application/javascript; charset=utf-8",
+          "Cache-Control": "no-cache"
+        }
+      });
+    }
+
+    if (url.pathname === "/icon.svg") {
+      return new Response(PWA_ICON_SVG, {
+        headers: {
+          "Content-Type": "image/svg+xml; charset=utf-8",
+          "Cache-Control": "public, max-age=604800, immutable"
+        }
+      });
+    }
+
+    if (url.pathname === "/icon-192.png") {
+      const bin = Uint8Array.from(atob(PWA_ICON_192_B64), c => c.charCodeAt(0));
+      return new Response(bin, {
+        headers: {
+          "Content-Type": "image/png",
+          "Cache-Control": "public, max-age=604800, immutable"
+        }
+      });
+    }
+
+    if (url.pathname === "/icon-512.png") {
+      const bin = Uint8Array.from(atob(PWA_ICON_512_B64), c => c.charCodeAt(0));
+      return new Response(bin, {
+        headers: {
+          "Content-Type": "image/png",
+          "Cache-Control": "public, max-age=604800, immutable"
+        }
+      });
+    }
+
+    if (url.pathname === "/favicon.ico") {
+      return Response.redirect(new URL("/icon.svg", request.url).toString(), 301);
+    }
+
     if (url.pathname === "/admin") {
       return new Response(renderAdminHTML(), {
         headers: { "Content-Type": "text/html; charset=utf-8" }
@@ -905,6 +1031,15 @@ function renderAdminHTML() {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>MRD Team - Quản Lý Kích hoạt Thiết bị</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MRD Admin">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="icon" type="image/svg+xml" href="/icon.svg">
+  <link rel="alternate icon" type="image/png" href="/icon-192.png">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <style>
     :root[data-theme="light"] {
@@ -1023,6 +1158,32 @@ function renderAdminHTML() {
     .nav-item:hover { background: var(--sidebar-hover); color: var(--text-main); }
     .nav-item.active { background: var(--sidebar-active); color: var(--sidebar-active-text); font-weight: 600; }
     .sidebar-footer { padding: 15px 16px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--sidebar-border); }
+    .btn-pwa-install {
+      width: 100%;
+      padding: 9px 12px;
+      background: rgba(37, 99, 235, 0.08);
+      border: 1px dashed #0284c7;
+      color: #0284c7;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+      margin-bottom: 8px;
+    }
+    .btn-pwa-install:hover {
+      background: rgba(56, 189, 248, 0.18);
+      transform: translateY(-1px);
+    }
+    :root[data-theme="dark"] .btn-pwa-install {
+      background: rgba(56, 189, 248, 0.12);
+      color: #38bdf8;
+      border-color: rgba(56, 189, 248, 0.35);
+    }
     .btn-logout { background: none; border: none; color: #ef4444; font-size: 13px; font-weight: 600; cursor: pointer; text-align: left; padding: 6px 8px; border-radius: 6px; transition: background 0.15s; }
     .btn-logout:hover { background: var(--sidebar-hover); }
 
@@ -1183,14 +1344,17 @@ function renderAdminHTML() {
     }
 
     .modal-backdrop {
-      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%; height: 100dvh;
       background: var(--modal-overlay); backdrop-filter: blur(4px);
       display: none; align-items: center; justify-content: center; z-index: 10000; padding: 15px;
+      overflow-y: auto; box-sizing: border-box;
     }
     .modal-box {
       background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 14px;
-      width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; padding: 24px;
-      box-shadow: var(--dropdown-shadow);
+      width: 100%; max-width: 520px; max-height: calc(100dvh - 30px); max-height: calc(100vh - 30px);
+      overflow-y: auto; padding: 24px; margin: auto;
+      box-shadow: var(--dropdown-shadow); box-sizing: border-box;
+      -webkit-overflow-scrolling: touch;
     }
     .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
     .modal-header h3 { font-size: 17px; font-weight: 700; color: var(--text-main); }
@@ -1340,8 +1504,8 @@ function renderAdminHTML() {
       .topbar-left { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
       #topbarTitle { font-size: 15px; font-weight: 700; max-width: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .topbar-right { gap: 6px !important; flex-shrink: 0; }
-      #btnSyncData, #themeBtn { padding: 5px 8px; font-size: 12px; }
-      #syncDataText, #themeBtnText { display: none; }
+      #btnSyncData, #themeBtn, #btnInstallApp { padding: 5px 8px; font-size: 12px; }
+      #syncDataText, #themeBtnText, #installAppText { display: none; }
       
       .tab-content { padding: 10px 8px; }
       .card { padding: 14px 12px; border-radius: 10px; }
@@ -1369,19 +1533,44 @@ function renderAdminHTML() {
       .pagination-bar { flex-direction: column; align-items: center; gap: 8px; text-align: center; }
 
       /* Popup Modal tối ưu trên Mobile */
-      .modal-backdrop { padding: 8px; }
-      .modal-box { padding: 16px 14px; border-radius: 12px; max-height: 94vh; width: 100%; box-sizing: border-box; }
-      .modal-header { margin-bottom: 12px; }
-      .modal-header h3 { font-size: 16px; }
+      .modal-backdrop {
+        padding: 10px;
+        align-items: flex-start;
+        overflow-y: auto;
+      }
+      .modal-box {
+        padding: 14px 14px 16px;
+        border-radius: 12px;
+        max-height: calc(100dvh - 20px);
+        max-height: calc(100vh - 20px);
+        width: 100%;
+        box-sizing: border-box;
+        margin: auto;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .modal-box .form-group { margin-bottom: 10px; }
+      .modal-box .form-group label { font-size: 11px; margin-bottom: 3px; }
+      .modal-box .form-group input, .modal-box .form-group select { padding: 7px 10px; font-size: 13px; height: 36px; }
+      .modal-header {
+        position: sticky; top: -14px; background: var(--bg-card);
+        padding-top: 2px; padding-bottom: 8px; margin-bottom: 10px;
+        border-bottom: 1px solid var(--border-color); z-index: 2;
+      }
+      .modal-header h3 { font-size: 15px; }
       .modal-actions { display: flex !important; width: 100%; gap: 8px; justify-content: stretch !important; }
       .modal-actions .btn { flex: 1; justify-content: center; text-align: center; min-height: 38px; }
       
-      /* Chi tiết thiết bị: phân bổ nút footer 2 cột cân xứng, không bị co ép chữ */
-      #modalFooterView { display: grid !important; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; }
-      #modalFooterView #btnSendMail { grid-column: span 2; min-height: 40px; padding: 8px 12px; }
-      #modalFooterView .btn { width: 100%; min-height: 38px; justify-content: center; text-align: center; padding: 6px 10px; font-size: 13px; white-space: nowrap; }
-      #modalFooterEdit { display: flex !important; gap: 8px; width: 100%; }
-      #modalFooterEdit .btn { flex: 1; justify-content: center; min-height: 38px; }
+      /* Chi tiết thiết bị: phân bổ nút footer 2 cột cân xứng, ẩn hiện chuẩn xác */
+      #modalFooterView[style*="display: none"],
+      #modalFooterEdit[style*="display: none"] {
+        display: none !important;
+      }
+      #modalFooterView { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; }
+      #modalFooterView #btnSendMail { grid-column: span 2; min-height: 38px; padding: 8px 12px; }
+      #modalFooterView .btn { width: 100%; min-height: 36px; justify-content: center; text-align: center; padding: 6px 10px; font-size: 13px; white-space: nowrap; }
+      #modalFooterEdit { display: flex; gap: 8px; width: 100%; }
+      #modalFooterEdit .btn { flex: 1; justify-content: center; min-height: 36px; }
 
       .bulk-edit-modal-box { max-height: 95vh; border-radius: 12px; width: 100%; }
       .bulk-edit-modal-header, .bulk-edit-modal-footer { padding: 12px 14px; }
@@ -1452,6 +1641,10 @@ function renderAdminHTML() {
         </div>
       </div>
 
+      <button class="btn-pwa-install" id="sidebarInstallBtn" onclick="installPWA()" style="display: none;">
+        <span>📲</span>
+        <span>Cài đặt App về máy</span>
+      </button>
       <button class="btn-logout" onclick="logout()">🔒 Khóa màn hình</button>
     </div>
   </div>
@@ -1484,6 +1677,10 @@ function renderAdminHTML() {
         <div style="font-size: 17px; font-weight: bold;" id="topbarTitle">Quản lý Kích hoạt</div>
       </div>
       <div class="topbar-right" style="display: flex; align-items: center; gap: 8px;">
+        <button class="theme-toggle-btn" id="btnInstallApp" onclick="installPWA()" title="Cài đặt App về máy để mở trực tiếp không cần trình duyệt" style="display: none;">
+          <span>📲</span>
+          <span id="installAppText">Cài đặt App</span>
+        </button>
         <button class="theme-toggle-btn" id="btnSyncData" onclick="manualSyncData()" title="Đồng bộ dữ liệu mới nhất từ máy chủ">
           <span id="syncDataIcon" class="sync-icon">🔄</span>
           <span id="syncDataText">Đồng bộ dữ liệu</span>
@@ -3292,7 +3489,10 @@ function renderAdminHTML() {
       }
 
       toggleEditMode(false);
-      document.getElementById("detailModal").style.display = "flex";
+      const modal = document.getElementById("detailModal");
+      modal.style.display = "flex";
+      const box = modal.querySelector(".modal-box");
+      if (box) box.scrollTop = 0;
     }
 
     function closeModal() {
@@ -3304,8 +3504,10 @@ function renderAdminHTML() {
       const fields = ["editSerial", "editRomSelect", "editStatus", "editEmail", "editCountry", "editNote"];
       fields.forEach(f => document.getElementById(f).disabled = !isEdit);
 
-      document.getElementById("modalFooterView").style.display = isEdit ? "none" : "flex";
-      document.getElementById("modalFooterEdit").style.display = isEdit ? "flex" : "none";
+      const footerView = document.getElementById("modalFooterView");
+      const footerEdit = document.getElementById("modalFooterEdit");
+      if (footerView) footerView.style.display = isEdit ? "none" : "";
+      if (footerEdit) footerEdit.style.display = isEdit ? "flex" : "none";
     }
 
     async function handleSaveEdit() {
@@ -3516,6 +3718,77 @@ function renderAdminHTML() {
       } catch (e) {
         showToast("Lỗi kết nối: " + e.message, "error");
         setBtnLoading(targetBtn, false);
+      }
+    }
+
+    // =========================================================================
+    // PROGRESSIVE WEB APP (PWA) / APP PACKAGE INSTALLATION
+    // =========================================================================
+    let deferredInstallPrompt = null;
+
+    function isStandaloneMode() {
+      return window.matchMedia('(display-mode: standalone)').matches ||
+             window.navigator.standalone === true ||
+             document.referrer.includes('android-app://');
+    }
+
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function() {
+        navigator.serviceWorker.register('/sw.js').catch(function(err) {
+          console.warn('PWA SW Register error:', err);
+        });
+      });
+    }
+
+    window.addEventListener('beforeinstallprompt', function(e) {
+      e.preventDefault();
+      deferredInstallPrompt = e;
+      if (!isStandaloneMode()) {
+        const topBtn = document.getElementById('btnInstallApp');
+        if (topBtn) topBtn.style.display = 'inline-flex';
+        const sideBtn = document.getElementById('sidebarInstallBtn');
+        if (sideBtn) sideBtn.style.display = 'flex';
+      }
+    });
+
+    window.addEventListener('appinstalled', function() {
+      deferredInstallPrompt = null;
+      const topBtn = document.getElementById('btnInstallApp');
+      if (topBtn) topBtn.style.display = 'none';
+      const sideBtn = document.getElementById('sidebarInstallBtn');
+      if (sideBtn) sideBtn.style.display = 'none';
+      showToast('Đã cài đặt App MRD Admin thành công! Bạn có thể mở trực tiếp từ màn hình chính.', 'success');
+    });
+
+    document.addEventListener('DOMContentLoaded', function() {
+      if (!isStandaloneMode()) {
+        const sideBtn = document.getElementById('sidebarInstallBtn');
+        if (sideBtn) sideBtn.style.display = 'flex';
+        const topBtn = document.getElementById('btnInstallApp');
+        if (topBtn) topBtn.style.display = 'inline-flex';
+      }
+    });
+
+    async function installPWA() {
+      if (deferredInstallPrompt) {
+        deferredInstallPrompt.prompt();
+        try {
+          const choice = await deferredInstallPrompt.userChoice;
+          if (choice.outcome === 'accepted') {
+            const topBtn = document.getElementById('btnInstallApp');
+            if (topBtn) topBtn.style.display = 'none';
+            const sideBtn = document.getElementById('sidebarInstallBtn');
+            if (sideBtn) sideBtn.style.display = 'none';
+          }
+        } catch (e) {}
+        deferredInstallPrompt = null;
+      } else {
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+        if (isIOS) {
+          alert("Để cài đặt App trên iPhone/iPad:\\n1. Bấm nút Chia sẻ (biểu tượng [↑]) ở dưới thanh công cụ Safari.\\n2. Chọn 'Thêm vào Màn hình chính' (Add to Home Screen).\\nSau đó bạn có thể mở trực tiếp từ icon ngoài màn hình!");
+        } else {
+          alert("Để cài đặt Web App về máy:\\n1. Bấm vào biểu tượng 3 chấm (⋮) ở góc trên trình duyệt.\\n2. Chọn 'Cài đặt ứng dụng' (hoặc 'Thêm vào Màn hình chính' / Install app).\\nSau khi cài, app sẽ xuất hiện như ứng dụng độc lập trên thiết bị!");
+        }
       }
     }
   </script>
