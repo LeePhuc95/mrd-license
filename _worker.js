@@ -1427,9 +1427,12 @@ function renderAdminHTML() {
     }
     .table-container { overflow-x: auto; width: 100%; border-radius: 8px; border: 1px solid var(--border-color); }
     table { width: 100%; border-collapse: collapse; text-align: center; font-size: 13px; }
-    th, td { padding: 12px 14px; border-bottom: 1px solid var(--border-color); white-space: nowrap; text-align: center; }
+    th, td { padding: 11px 12px; border-bottom: 1px solid var(--border-color); white-space: nowrap; text-align: center; }
     th { background: var(--table-header); color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; text-align: center; }
-    .col-note { text-align: left !important; }
+    .col-cb { width: 44px; min-width: 44px; max-width: 44px; padding: 11px 4px !important; text-align: center; }
+    .col-stt { width: 50px; min-width: 50px; max-width: 55px; padding: 11px 4px !important; text-align: center; }
+    .col-actions { width: 110px; min-width: 110px; text-align: center; }
+    .col-note { text-align: left !important; width: 100%; min-width: 150px; }
     #romTab table { text-align: left; }
     #romTab table th, #romTab table td { text-align: left; }
     #romTab table th:last-child, #romTab table td:last-child { text-align: center; }
@@ -1458,7 +1461,19 @@ function renderAdminHTML() {
     .btn-green { background: #16a34a; color: #fff; }
     .btn-red { background: #dc2626; color: #fff; }
     .btn-gray { background: #64748b; color: #fff; }
-    .btn:hover { opacity: 0.9; }
+    .btn:hover:not(:disabled) { opacity: 0.9; }
+    .btn:disabled, .btn.loading {
+      opacity: 0.65 !important;
+      cursor: not-allowed !important;
+      pointer-events: none !important;
+      filter: grayscale(25%);
+    }
+    .btn-spinner {
+      width: 13px; height: 13px; border: 2px solid rgba(255, 255, 255, 0.35);
+      border-top-color: #fff; border-radius: 50%;
+      animation: spinLoader 0.75s linear infinite; display: inline-block;
+      flex-shrink: 0;
+    }
 
     .modal-backdrop {
       position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -1829,7 +1844,7 @@ function renderAdminHTML() {
           </div>
           <div class="bulk-toolbar-actions">
             <button type="button" class="btn btn-blue" style="padding: 6px 12px; font-size: 12px;" onclick="openBulkEditLicenseModal()">✏️ Sửa đã chọn</button>
-            <button type="button" class="btn btn-red" style="padding: 6px 12px; font-size: 12px;" onclick="handleBulkDeleteLicenses()">🗑️ Xóa đã chọn</button>
+            <button type="button" class="btn btn-red" id="btnBulkDeleteLicense" style="padding: 6px 12px; font-size: 12px;" onclick="handleBulkDeleteLicenses()">🗑️ Xóa đã chọn</button>
           </div>
         </div>
 
@@ -1837,17 +1852,17 @@ function renderAdminHTML() {
           <table>
             <thead>
               <tr>
-                <th style="width: 40px; text-align: center;">
+                <th class="col-cb">
                   <input type="checkbox" id="checkAllLicenses" onchange="toggleSelectAllLicenses(this.checked)">
                 </th>
-                <th style="width: 50px;">STT</th>
-                <th>SERIAL</th>
-                <th>PHIÊN BẢN</th>
-                <th>TRẠNG THÁI KEY</th>
-                <th>EMAIL/SĐT</th>
-                <th>QUỐC GIA</th>
-                <th>GỬI MAIL</th>
-                <th>JSON</th>
+                <th class="col-stt">STT</th>
+                <th style="width: 140px;">SERIAL</th>
+                <th style="width: 130px;">PHIÊN BẢN</th>
+                <th style="width: 105px;">TRẠNG THÁI KEY</th>
+                <th style="width: 180px;">EMAIL/SĐT</th>
+                <th style="width: 80px;">QUỐC GIA</th>
+                <th style="width: 85px;">GỬI MAIL</th>
+                <th style="width: 130px;">JSON</th>
                 <th class="col-note">GHI CHÚ</th>
               </tr>
             </thead>
@@ -1932,7 +1947,7 @@ function renderAdminHTML() {
           </div>
           <div class="bulk-toolbar-actions">
             <button type="button" class="btn btn-blue" style="padding: 6px 12px; font-size: 12px;" onclick="openBulkEditGiftModal()">✏️ Sửa đã chọn</button>
-            <button type="button" class="btn btn-red" style="padding: 6px 12px; font-size: 12px;" onclick="handleBulkDeleteGifts()">🗑️ Xóa đã chọn</button>
+            <button type="button" class="btn btn-red" id="btnBulkDeleteGift" style="padding: 6px 12px; font-size: 12px;" onclick="handleBulkDeleteGifts()">🗑️ Xóa đã chọn</button>
           </div>
         </div>
 
@@ -1940,16 +1955,16 @@ function renderAdminHTML() {
           <table>
             <thead>
               <tr>
-                <th style="width: 40px; text-align: center;">
+                <th class="col-cb">
                   <input type="checkbox" id="checkAllGifts" onchange="toggleSelectAllGifts(this.checked)">
                 </th>
-                <th style="width: 50px;">STT</th>
-                <th>GIFT CODE</th>
-                <th>NGÀY TẠO</th>
-                <th>NGÀY HẾT HẠN</th>
-                <th>TRẠNG THÁI KEY</th>
+                <th class="col-stt">STT</th>
+                <th style="width: 180px;">GIFT CODE</th>
+                <th style="width: 120px;">NGÀY TẠO</th>
+                <th style="width: 120px;">NGÀY HẾT HẠN</th>
+                <th style="width: 110px;">TRẠNG THÁI KEY</th>
                 <th class="col-note">GHI CHÚ</th>
-                <th style="width: 140px; text-align: center;">ACTIONS</th>
+                <th class="col-actions">ACTIONS</th>
               </tr>
             </thead>
             <tbody id="giftTableBody">
@@ -2249,6 +2264,23 @@ function renderAdminHTML() {
     function hideActionLoader() {
       const loader = document.getElementById("globalActionLoader");
       if (loader) loader.style.display = "none";
+    }
+
+    function setBtnLoading(btn, isLoading, loadingText) {
+      if (!btn) return;
+      if (isLoading) {
+        if (!btn.dataset.origHtml) btn.dataset.origHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.classList.add("loading");
+        btn.innerHTML = '<span class="btn-spinner"></span> ' + (loadingText || "Đang xử lý...");
+      } else {
+        btn.disabled = false;
+        btn.classList.remove("loading");
+        if (btn.dataset.origHtml) {
+          btn.innerHTML = btn.dataset.origHtml;
+          delete btn.dataset.origHtml;
+        }
+      }
     }
 
     function showToast(message, type = "info", duration = 4000) {
@@ -2704,10 +2736,10 @@ function renderAdminHTML() {
           const isSelected = selectedLicenseIds.has(item.id);
           const linkHref = getGithubFileUrl("json/" + item.prefix + ".json");
           return '<tr onclick="openDetailModal(' + item.id + ')" style="' + (isSelected ? 'background: var(--table-hover);' : '') + '">' +
-            '<td style="text-align: center;" onclick="event.stopPropagation()">' +
+            '<td class="col-cb" onclick="event.stopPropagation()">' +
               '<input type="checkbox" ' + (isSelected ? 'checked' : '') + ' onchange="toggleLicenseItem(' + item.id + ', this.checked)">' +
             '</td>' +
-            '<td><b>' + stt + '</b></td>' +
+            '<td class="col-stt"><b>' + stt + '</b></td>' +
             '<td><b><code>' + item.serial + '</code></b></td>' +
             '<td><code>' + item.rom_version + '</code></td>' +
             '<td><span class="badge badge-' + item.key_status + '">' + item.key_status + '</span></td>' +
@@ -2765,7 +2797,7 @@ function renderAdminHTML() {
         tbody.innerHTML = pageItems.map(function(r) {
           return '<tr>' +
             '<td><b><code>' + r + '</code></b></td>' +
-            '<td style="text-align: center;"><button type="button" class="btn btn-red" style="padding:4px 8px;font-size:11px;" data-name="' + r + '" onclick="handleDeleteRom(this.dataset.name)">Xóa</button></td>' +
+            '<td style="text-align: center;"><button type="button" class="btn btn-red" style="padding:4px 8px;font-size:11px;" data-name="' + r + '" onclick="handleDeleteRom(this.dataset.name, this)">Xóa</button></td>' +
           '</tr>';
         }).join('');
       }
@@ -2878,18 +2910,18 @@ function renderAdminHTML() {
             : '<span class="badge badge-OK">OK</span>';
 
           return '<tr style="' + (isSelected ? 'background: var(--table-hover);' : '') + '">' +
-            '<td style="text-align: center;" onclick="event.stopPropagation()">' +
+            '<td class="col-cb" onclick="event.stopPropagation()">' +
               '<input type="checkbox" ' + (isSelected ? 'checked' : '') + ' onchange="toggleGiftItem(' + item.id + ', this.checked)">' +
             '</td>' +
-            '<td><b>' + stt + '</b></td>' +
+            '<td class="col-stt"><b>' + stt + '</b></td>' +
             '<td><b><code>' + item.gift_code + '</code></b></td>' +
             '<td><code>' + item.start_date + '</code></td>' +
             '<td><code>' + item.expiration_date + '</code></td>' +
             '<td>' + statusBadge + '</td>' +
             '<td class="col-note">' + (item.note || "-") + '</td>' +
-            '<td style="text-align: center;">' +
+            '<td class="col-actions">' +
               '<button type="button" class="btn btn-blue" style="padding: 4px 8px; font-size: 11px; margin-right: 4px;" onclick="openEditGiftModal(' + item.id + ')">Sửa</button>' +
-              '<button type="button" class="btn btn-red" style="padding: 4px 8px; font-size: 11px;" data-code="' + item.gift_code + '" onclick="handleDeleteGiftKey(' + item.id + ', this.dataset.code)">Xóa</button>' +
+              '<button type="button" class="btn btn-red" style="padding: 4px 8px; font-size: 11px;" data-code="' + item.gift_code + '" onclick="handleDeleteGiftKey(' + item.id + ', this.dataset.code, this)">Xóa</button>' +
             '</td>' +
           '</tr>';
         }).join('');
@@ -2909,16 +2941,22 @@ function renderAdminHTML() {
         true
       );
       if (!confirmed) return;
-      const res = await sendAdminAction({
-        action: "bulk_delete_licenses",
-        ids: Array.from(selectedLicenseIds)
-      }, "Đang xóa " + count + " mục & cập nhật Shards...");
-      if (res && res.success) {
-        selectedLicenseIds.clear();
-        await loadAllData();
-        showToast(res.message || "Đã xóa thành công!", "success", 6000);
-      } else {
-        showToast("Lỗi xóa hàng loạt: " + ((res && res.error) || "Không rõ"), "error", 6000);
+      const delBtn = document.getElementById("btnBulkDeleteLicense");
+      setBtnLoading(delBtn, true, "Đang xóa...");
+      try {
+        const res = await sendAdminAction({
+          action: "bulk_delete_licenses",
+          ids: Array.from(selectedLicenseIds)
+        }, "Đang xóa " + count + " mục & cập nhật Shards...");
+        if (res && res.success) {
+          selectedLicenseIds.clear();
+          await loadAllData();
+          showToast(res.message || "Đã xóa thành công!", "success", 6000);
+        } else {
+          showToast("Lỗi xóa hàng loạt: " + ((res && res.error) || "Không rõ"), "error", 6000);
+        }
+      } finally {
+        setBtnLoading(delBtn, false);
       }
     }
 
@@ -3004,9 +3042,7 @@ function renderAdminHTML() {
       }
 
       const saveBtn = document.getElementById("btnSaveBulkLicenses");
-      const origText = saveBtn.innerText;
-      saveBtn.innerText = "⏳ Đang đồng bộ...";
-      saveBtn.disabled = true;
+      setBtnLoading(saveBtn, true, "Đang đồng bộ...");
 
       showToast("Đang đồng bộ " + itemsToUpdate.length + " mục lên D1 và GitHub...", "info");
 
@@ -3014,7 +3050,7 @@ function renderAdminHTML() {
         const res = await sendAdminAction({
           action: "bulk_update_licenses",
           items: itemsToUpdate
-        });
+        }, "Đang đồng bộ " + itemsToUpdate.length + " mục lên D1 và GitHub...");
 
         if (res && res.success) {
           closeBulkEditLicenseModal();
@@ -3022,13 +3058,12 @@ function renderAdminHTML() {
           await loadAllData();
           showToast(res.message || "Đã lưu và đồng bộ thành công!", "success", 7000);
         } else {
-          showToast("Lỗi đồng bộ: " + (res.error || "Không rõ"), "error", 7000);
+          showToast("Lỗi đồng bộ: " + ((res && res.error) || "Không rõ"), "error", 7000);
         }
       } catch (err) {
         showToast("Lỗi kết nối: " + err.message, "error");
       } finally {
-        saveBtn.innerText = origText;
-        saveBtn.disabled = false;
+        setBtnLoading(saveBtn, false);
       }
     }
 
@@ -3041,16 +3076,22 @@ function renderAdminHTML() {
         true
       );
       if (!confirmed) return;
-      const res = await sendAdminAction({
-        action: "bulk_delete_gift_keys",
-        ids: Array.from(selectedGiftIds)
-      }, "Đang xóa " + count + " Gift Code...");
-      if (res && res.success) {
-        selectedGiftIds.clear();
-        await loadAllData();
-        showToast(res.message || "Đã xóa Gift Code thành công!", "success", 6000);
-      } else {
-        showToast("Lỗi xóa: " + ((res && res.error) || "Không rõ"), "error", 6000);
+      const delBtn = document.getElementById("btnBulkDeleteGift");
+      setBtnLoading(delBtn, true, "Đang xóa...");
+      try {
+        const res = await sendAdminAction({
+          action: "bulk_delete_gift_keys",
+          ids: Array.from(selectedGiftIds)
+        }, "Đang xóa " + count + " Gift Code...");
+        if (res && res.success) {
+          selectedGiftIds.clear();
+          await loadAllData();
+          showToast(res.message || "Đã xóa Gift Code thành công!", "success", 6000);
+        } else {
+          showToast("Lỗi xóa: " + ((res && res.error) || "Không rõ"), "error", 6000);
+        }
+      } finally {
+        setBtnLoading(delBtn, false);
       }
     }
 
@@ -3100,9 +3141,7 @@ function renderAdminHTML() {
       }
 
       const saveBtn = document.getElementById("btnSaveBulkGifts");
-      const origText = saveBtn.innerText;
-      saveBtn.innerText = "⏳ Đang đồng bộ...";
-      saveBtn.disabled = true;
+      setBtnLoading(saveBtn, true, "Đang đồng bộ...");
 
       showToast("Đang đồng bộ " + itemsToUpdate.length + " Gift Code lên D1 và GitHub...", "info");
 
@@ -3110,7 +3149,7 @@ function renderAdminHTML() {
         const res = await sendAdminAction({
           action: "bulk_update_gift_keys",
           items: itemsToUpdate
-        });
+        }, "Đang đồng bộ " + itemsToUpdate.length + " Gift Code lên D1 và GitHub...");
 
         if (res && res.success) {
           closeBulkEditGiftModal();
@@ -3118,13 +3157,12 @@ function renderAdminHTML() {
           await loadAllData();
           showToast(res.message || "Đã lưu và đồng bộ Gift Code thành công!", "success", 7000);
         } else {
-          showToast("Lỗi đồng bộ: " + (res.error || "Không rõ"), "error", 7000);
+          showToast("Lỗi đồng bộ: " + ((res && res.error) || "Không rõ"), "error", 7000);
         }
       } catch (err) {
         showToast("Lỗi kết nối: " + err.message, "error");
       } finally {
-        saveBtn.innerText = origText;
-        saveBtn.disabled = false;
+        setBtnLoading(saveBtn, false);
       }
     }
 
@@ -3353,10 +3391,7 @@ function renderAdminHTML() {
       if (!parsedImportData || parsedImportData.length === 0) return;
 
       const confirmBtn = document.getElementById("btnConfirmUpload");
-      const origText = confirmBtn.innerText;
-      confirmBtn.innerText = "⏳ Đang nhập dữ liệu...";
-      confirmBtn.disabled = true;
-
+      setBtnLoading(confirmBtn, true, "Đang nhập dữ liệu...");
       showToast("Đang nhập dữ liệu vào hệ thống...", "info");
 
       try {
@@ -3365,12 +3400,12 @@ function renderAdminHTML() {
           res = await sendAdminAction({
             action: "bulk_import_licenses",
             items: parsedImportData
-          });
+          }, "Đang nhập danh sách Kích hoạt từ Excel...");
         } else {
           res = await sendAdminAction({
             action: "bulk_import_roms",
             names: parsedImportData
-          });
+          }, "Đang nhập danh mục Sản phẩm từ Excel...");
         }
 
         if (res && res.success) {
@@ -3378,13 +3413,12 @@ function renderAdminHTML() {
           await loadAllData();
           showToast(res.message || "Đã nhập dữ liệu thành công!", "success", 7000);
         } else {
-          showToast("Lỗi nhập dữ liệu: " + (res.error || "Không rõ"), "error", 7000);
+          showToast("Lỗi nhập dữ liệu: " + ((res && res.error) || "Không rõ"), "error", 7000);
         }
       } catch (err) {
         showToast("Lỗi kết nối: " + err.message, "error");
       } finally {
-        confirmBtn.innerText = origText;
-        confirmBtn.disabled = false;
+        setBtnLoading(confirmBtn, false);
       }
     }
 
@@ -3439,11 +3473,7 @@ function renderAdminHTML() {
       if (start_date > expiration_date) return showToast("Ngày bắt đầu không được lớn hơn ngày hết hạn!", "warn");
 
       const saveBtn = document.getElementById("btnSaveGift");
-      const origText = saveBtn ? saveBtn.innerHTML : "Lưu";
-      if (saveBtn) {
-        saveBtn.disabled = true;
-        saveBtn.innerHTML = "⏳ Đang lưu...";
-      }
+      setBtnLoading(saveBtn, true, "Đang lưu...");
 
       try {
         const action = id ? "update_gift_key" : "create_gift_key";
@@ -3457,29 +3487,31 @@ function renderAdminHTML() {
           await loadAllData();
           showToast(res.message || "Đã lưu Gift Code thành công!", "success", 6000);
         } else {
-          showToast("Lỗi lưu Gift Code: " + (res.error || "Không rõ"), "error", 6000);
+          showToast("Lỗi lưu Gift Code: " + ((res && res.error) || "Không rõ"), "error", 6000);
         }
       } finally {
-        if (saveBtn) {
-          saveBtn.disabled = false;
-          saveBtn.innerHTML = origText;
-        }
+        setBtnLoading(saveBtn, false);
       }
     }
 
-    async function handleDeleteGiftKey(id, code) {
+    async function handleDeleteGiftKey(id, code, btnEl) {
       const confirmed = await showConfirm(
         "Xác nhận xóa Gift Code",
         'Bạn có chắc chắn muốn xóa mã gift code "' + code + '"?',
         true
       );
       if (!confirmed) return;
-      const res = await sendAdminAction({ action: "delete_gift_key", id: Number(id) }, "Đang xóa Gift Code...");
-      if (res && res.success) {
-        await loadAllData();
-        showToast(res.message || "Đã xóa Gift Code thành công!", "success", 6000);
-      } else {
-        showToast("Lỗi xóa Gift Code: " + (res.error || "Không rõ"), "error", 6000);
+      if (btnEl) setBtnLoading(btnEl, true, "Đang xóa...");
+      try {
+        const res = await sendAdminAction({ action: "delete_gift_key", id: Number(id) }, "Đang xóa Gift Code...");
+        if (res && res.success) {
+          await loadAllData();
+          showToast(res.message || "Đã xóa Gift Code thành công!", "success", 6000);
+        } else {
+          showToast("Lỗi xóa Gift Code: " + ((res && res.error) || "Không rõ"), "error", 6000);
+        }
+      } finally {
+        if (btnEl) setBtnLoading(btnEl, false);
       }
     }
 
@@ -3545,11 +3577,7 @@ function renderAdminHTML() {
 
     async function handleSaveEdit() {
       const saveBtn = document.getElementById("btnSaveEdit");
-      const origText = saveBtn ? saveBtn.innerHTML : "Lưu";
-      if (saveBtn) {
-        saveBtn.disabled = true;
-        saveBtn.innerHTML = "⏳ Đang lưu...";
-      }
+      setBtnLoading(saveBtn, true, "Đang lưu...");
 
       try {
         const payload = {
@@ -3572,10 +3600,7 @@ function renderAdminHTML() {
         await loadAllData();
         showToast("Đã lưu cập nhật thành công!", "success");
       } finally {
-        if (saveBtn) {
-          saveBtn.disabled = false;
-          saveBtn.innerHTML = origText;
-        }
+        setBtnLoading(saveBtn, false);
       }
     }
 
@@ -3587,13 +3612,19 @@ function renderAdminHTML() {
         true
       );
       if (confirmed) {
-        const res = await sendAdminAction({ action: "delete_license", id: currentSelectedItem.id }, "Đang xóa thiết bị & cập nhật Shard...");
-        if (res && res.success) {
-          closeModal();
-          await loadAllData();
-          showToast("Đã xóa thiết bị thành công!", "success");
-        } else {
-          showToast("Lỗi xóa: " + ((res && res.error) || "Không thể xóa"), "error");
+        const delBtn = document.getElementById("btnDeleteKey");
+        setBtnLoading(delBtn, true, "Đang xóa...");
+        try {
+          const res = await sendAdminAction({ action: "delete_license", id: currentSelectedItem.id }, "Đang xóa thiết bị & cập nhật Shard...");
+          if (res && res.success) {
+            closeModal();
+            await loadAllData();
+            showToast("Đã xóa thiết bị thành công!", "success");
+          } else {
+            showToast("Lỗi xóa: " + ((res && res.error) || "Không thể xóa"), "error");
+          }
+        } finally {
+          setBtnLoading(delBtn, false);
         }
       }
     }
@@ -3615,11 +3646,7 @@ function renderAdminHTML() {
       if (!serial) return showToast("Vui lòng nhập Serial!", "warn");
 
       const saveBtn = document.getElementById("btnSaveNewLicense");
-      const origText = saveBtn ? saveBtn.innerHTML : "+ Thêm Kích hoạt";
-      if (saveBtn) {
-        saveBtn.disabled = true;
-        saveBtn.innerHTML = "⏳ Đang tạo...";
-      }
+      setBtnLoading(saveBtn, true, "Đang tạo...");
 
       try {
         const res = await sendAdminAction({
@@ -3643,10 +3670,7 @@ function renderAdminHTML() {
         showToast(res.message || ("Đã thêm thiết bị mới thành công (Shard: json/" + res.prefix + ".json)!"), "success", 6000);
         await loadAllData();
       } finally {
-        if (saveBtn) {
-          saveBtn.disabled = false;
-          saveBtn.innerHTML = origText;
-        }
+        setBtnLoading(saveBtn, false);
       }
     }
 
@@ -3658,11 +3682,7 @@ function renderAdminHTML() {
       );
       if (!confirmed) return;
       const btn = document.getElementById("btnSyncShards");
-      const origText = btn ? btn.innerHTML : "🔄 Đồng bộ Shards";
-      if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = "🔄 Đang đồng bộ...";
-      }
+      setBtnLoading(btn, true, "Đang đồng bộ...");
       try {
         const res = await sendAdminAction({ action: "reindex_all_prefixes" }, "Đang tính toán lại Prefix & đồng bộ tất cả Shards...");
         if (res && res.success) {
@@ -3672,10 +3692,7 @@ function renderAdminHTML() {
           showToast("Lỗi đồng bộ: " + ((res && res.error) || "Không rõ"), "error", 8000);
         }
       } finally {
-        if (btn) {
-          btn.disabled = false;
-          btn.innerHTML = origText;
-        }
+        setBtnLoading(btn, false);
       }
     }
 
@@ -3683,11 +3700,7 @@ function renderAdminHTML() {
       const name = document.getElementById("newRomName").value.trim();
       if (!name) return showToast("Vui lòng nhập tên Sản phẩm!", "warn");
       const btn = document.getElementById("btnAddRom");
-      const origText = btn ? btn.innerHTML : "+ Thêm";
-      if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = "⏳ Đang thêm...";
-      }
+      setBtnLoading(btn, true, "Đang thêm...");
       try {
         const res = await sendAdminAction({ action: "add_rom", name }, "Đang thêm Sản phẩm mới...");
         if (res && res.success !== false) {
@@ -3698,26 +3711,28 @@ function renderAdminHTML() {
           showToast("Lỗi: " + ((res && res.error) || "Không thể thêm"), "error");
         }
       } finally {
-        if (btn) {
-          btn.disabled = false;
-          btn.innerHTML = origText;
-        }
+        setBtnLoading(btn, false);
       }
     }
 
-    async function handleDeleteRom(name) {
+    async function handleDeleteRom(name, btnEl) {
       const confirmed = await showConfirm(
         "Xác nhận xóa",
         'Bạn có chắc chắn muốn xóa "' + name + '"?',
         true
       );
       if (confirmed) {
-        const res = await sendAdminAction({ action: "delete_rom", name }, "Đang xóa Sản phẩm...");
-        if (res && res.success !== false) {
-          await loadAllData();
-          showToast('Đã xóa "' + name + '"', "success");
-        } else {
-          showToast("Lỗi: " + ((res && res.error) || "Không thể xóa"), "error");
+        if (btnEl) setBtnLoading(btnEl, true, "Đang xóa...");
+        try {
+          const res = await sendAdminAction({ action: "delete_rom", name }, "Đang xóa Sản phẩm...");
+          if (res && res.success !== false) {
+            await loadAllData();
+            showToast('Đã xóa "' + name + '"', "success");
+          } else {
+            showToast("Lỗi: " + ((res && res.error) || "Không thể xóa"), "error");
+          }
+        } finally {
+          if (btnEl) setBtnLoading(btnEl, false);
         }
       }
     }
@@ -3747,17 +3762,12 @@ function renderAdminHTML() {
       }
 
       const targetBtn = btn || document.getElementById("btnSendMail");
-      let originalText = "Gửi Email kích hoạt";
-      if (targetBtn) {
-        originalText = targetBtn.innerHTML;
-        targetBtn.innerHTML = "⏳ Đang gửi...";
-        targetBtn.disabled = true;
-      }
+      setBtnLoading(targetBtn, true, "Đang gửi...");
 
       showToast("Đang kích hoạt lệnh gửi mail...", "info");
 
       try {
-        const res = await sendAdminAction({ action: "resend_mail", id: currentSelectedItem.id });
+        const res = await sendAdminAction({ action: "resend_mail", id: currentSelectedItem.id }, "Đang gửi email kích hoạt...");
         
         if (res && res.success) {
           if (targetBtn) targetBtn.innerHTML = "✅ Đã gửi lệnh!";
@@ -3767,18 +3777,12 @@ function renderAdminHTML() {
             showToast("Đã gửi email thành công! Vui lòng kiểm tra hộp thư.", "success");
           }, 1000);
         } else {
-          showToast("Lỗi gửi mail: " + (res.error || "Không gửi được"), "error");
-          if (targetBtn) {
-            targetBtn.innerHTML = originalText;
-            targetBtn.disabled = false;
-          }
+          showToast("Lỗi gửi mail: " + ((res && res.error) || "Không gửi được"), "error");
+          setBtnLoading(targetBtn, false);
         }
       } catch (e) {
         showToast("Lỗi kết nối: " + e.message, "error");
-        if (targetBtn) {
-          targetBtn.innerHTML = originalText;
-          targetBtn.disabled = false;
-        }
+        setBtnLoading(targetBtn, false);
       }
     }
   </script>
