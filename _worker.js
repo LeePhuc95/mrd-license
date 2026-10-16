@@ -1426,9 +1426,13 @@ function renderAdminHTML() {
       padding: 22px; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04);
     }
     .table-container { overflow-x: auto; width: 100%; border-radius: 8px; border: 1px solid var(--border-color); }
-    table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
-    th, td { padding: 12px 14px; border-bottom: 1px solid var(--border-color); white-space: nowrap; }
-    th { background: var(--table-header); color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
+    table { width: 100%; border-collapse: collapse; text-align: center; font-size: 13px; }
+    th, td { padding: 12px 14px; border-bottom: 1px solid var(--border-color); white-space: nowrap; text-align: center; }
+    th { background: var(--table-header); color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; text-align: center; }
+    .col-note { text-align: left !important; }
+    #romTab table { text-align: left; }
+    #romTab table th, #romTab table td { text-align: left; }
+    #romTab table th:last-child, #romTab table td:last-child { text-align: center; }
     tbody tr { cursor: pointer; transition: background 0.15s; }
     tbody tr:hover { background: var(--table-hover); }
 
@@ -1553,6 +1557,10 @@ function renderAdminHTML() {
     .bulk-cell-input, .bulk-cell-select {
       width: 100%; min-width: 110px; padding: 6px 8px; border: 1px solid var(--input-border);
       border-radius: 6px; background: var(--input-bg); color: var(--text-main); font-size: 12.5px; outline: none;
+      text-align: center;
+    }
+    .bulk-note, .bulk-gift-note, .bulk-cell-input.bulk-note, .bulk-cell-input.bulk-gift-note {
+      text-align: left !important;
     }
 
     /* UPLOAD MODAL */
@@ -1577,10 +1585,6 @@ function renderAdminHTML() {
       .topbar { padding: 10px 12px; gap: 6px; }
       #topbarTitle { font-size: 14px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .topbar-right { gap: 6px !important; }
-      #btnUploadLicense { padding: 5px 9px; font-size: 11.5px; }
-      #btnUploadLicense .btn-text-full { display: none; }
-      #btnSyncShards { padding: 5px 9px; font-size: 11.5px; }
-      #btnSyncShards .btn-text-full { display: none; }
       #themeBtn { padding: 5px 8px; font-size: 12px; }
       #themeBtnText { display: none; }
       
@@ -1641,7 +1645,6 @@ function renderAdminHTML() {
     </div>
     <ul class="nav-list">
       <li class="nav-item active" onclick="switchTab('listTab', this)">📋 Danh sách Kích hoạt</li>
-      <li class="nav-item" onclick="switchTab('createTab', this)">➕ Kích hoạt mới</li>
       <li class="nav-item" onclick="switchTab('giftTab', this)">🎁 Gift Code</li>
       <li class="nav-item" onclick="switchTab('romTab', this)">📁 Sản phẩm</li>
     </ul>
@@ -1684,8 +1687,6 @@ function renderAdminHTML() {
         <div style="font-size: 17px; font-weight: bold;" id="topbarTitle">Danh sách Kích hoạt</div>
       </div>
       <div class="topbar-right" style="display: flex; align-items: center; gap: 8px;">
-        <button class="btn btn-green" id="btnUploadLicense" style="padding: 6px 12px; font-size: 12px; border-radius: 20px;" onclick="openUploadModal('license')" title="Tải lên tệp Excel danh sách kích hoạt">📥 <span class="btn-text-full">Upload Excel</span></button>
-        <button class="btn btn-blue" id="btnSyncShards" style="padding: 6px 12px; font-size: 12px; border-radius: 20px;" onclick="handleSyncAllPrefixes()" title="Tính toán lại Prefix và đồng bộ cache phân mảnh">🔄 <span class="btn-text-full">Đồng bộ Shards</span></button>
         <div class="theme-dropdown-container">
           <button class="theme-toggle-btn" id="themeBtn" onclick="toggleThemeDropdown(event)" title="Chọn giao diện">
             <span id="themeBtnIcon">🌙</span>
@@ -1712,6 +1713,19 @@ function renderAdminHTML() {
 
     <!-- TAB 1: DANH SÁCH -->
     <div id="listTab" class="tab-content active">
+      <div class="card" style="margin-bottom: 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <h3 style="margin: 0; font-size: 16px;">📱 Danh sách Kích hoạt</h3>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <button type="button" class="btn btn-green" id="btnUploadLicense" style="padding: 7px 14px; font-size: 12px;" onclick="openUploadModal('license')" title="Tải lên tệp Excel danh sách kích hoạt">📥 Upload Excel</button>
+            <button type="button" class="btn btn-blue" id="btnSyncShards" style="padding: 7px 14px; font-size: 12px;" onclick="handleSyncAllPrefixes()" title="Tính toán lại Prefix và đồng bộ cache phân mảnh">🔄 Đồng bộ Shards</button>
+            <button type="button" class="btn btn-green" style="padding: 7px 14px; font-size: 12px;" onclick="openCreateLicenseModal()">+ Thêm mới</button>
+          </div>
+        </div>
+      </div>
+
       <div class="card">
         <!-- FILTER BAR -->
         <div class="filter-bar">
@@ -1756,7 +1770,7 @@ function renderAdminHTML() {
                 <th>QUỐC GIA</th>
                 <th>GỬI MAIL</th>
                 <th>JSON</th>
-                <th>GHI CHÚ</th>
+                <th class="col-note">GHI CHÚ</th>
               </tr>
             </thead>
             <tbody id="licenseTableBody">
@@ -1770,49 +1784,13 @@ function renderAdminHTML() {
       </div>
     </div>
 
-    <!-- TAB 2: TẠO MỚI -->
-    <div id="createTab" class="tab-content">
-      <div class="card" style="max-width: 550px; margin: auto;">
-        <div class="form-group">
-          <label>SERIAL (*)</label>
-          <input type="text" id="addSerial" placeholder="Ví dụ: G6AY8400E7W">
-        </div>
-        <div class="form-group">
-          <label>PHIÊN BẢN (*)</label>
-          <select id="addRomSelect"></select>
-        </div>
-        <div class="form-group">
-          <label>TRẠNG THÁI KEY</label>
-          <select id="addStatus">
-            <option value="OK">OK (Kích hoạt)</option>
-            <option value="DEL">DEL (Xóa)</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>EMAIL/SĐT</label>
-          <input type="text" id="addEmail" placeholder="Nhập Email hoặc SĐT khách">
-        </div>
-        <div class="form-group">
-          <label>QUỐC GIA</label>
-          <select id="addCountry">
-            <option value="VN">VN (Gửi mail tiếng Việt)</option>
-            <option value="Other">Other (Gửi mail tiếng Anh)</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>GHI CHÚ</label>
-          <input type="text" id="addNote" placeholder="Ghi chú thiết bị/khách hàng">
-        </div>
-        <button class="btn btn-green" style="width: 100%;" onclick="handleCreateLicense()">+ Thêm Kích hoạt</button>
-      </div>
-    </div>
 
     <!-- TAB 3: DANH MỤC SẢN PHẨM -->
     <div id="romTab" class="tab-content">
       <div class="card" style="max-width: 650px; margin: 0 auto 20px auto;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
           <h4 style="margin: 0;">Thêm Sản phẩm</h4>
-          <button class="btn btn-green" style="padding: 5px 12px; font-size: 12px;" onclick="openUploadModal('rom')">📥 Upload Excel Sản phẩm</button>
+          <button class="btn btn-green" style="padding: 5px 12px; font-size: 12px;" onclick="openUploadModal('rom')">📥 Upload Excel</button>
         </div>
         <div style="display: flex; gap: 8px;">
           <input type="text" id="newRomName" placeholder="Tên Sản phẩm mới..." style="flex: 1; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-body); color: var(--text-main);">
@@ -1892,7 +1870,7 @@ function renderAdminHTML() {
                 <th>NGÀY TẠO</th>
                 <th>NGÀY HẾT HẠN</th>
                 <th>TRẠNG THÁI KEY</th>
-                <th>GHI CHÚ</th>
+                <th class="col-note">GHI CHÚ</th>
                 <th style="width: 140px; text-align: center;">ACTIONS</th>
               </tr>
             </thead>
@@ -1927,7 +1905,7 @@ function renderAdminHTML() {
                 <th>EMAIL/SĐT</th>
                 <th>QUỐC GIA</th>
                 <th>GỬI MAIL</th>
-                <th>GHI CHÚ</th>
+                <th class="col-note">GHI CHÚ</th>
               </tr>
             </thead>
             <tbody id="bulkEditLicenseTbody"></tbody>
@@ -1957,7 +1935,7 @@ function renderAdminHTML() {
                 <th>GIFT CODE (*)</th>
                 <th>NGÀY TẠO (YYYY-MM-DD) (*)</th>
                 <th>NGÀY HẾT HẠN (YYYY-MM-DD) (*)</th>
-                <th>GHI CHÚ</th>
+                <th class="col-note">GHI CHÚ</th>
               </tr>
             </thead>
             <tbody id="bulkEditGiftTbody"></tbody>
@@ -2008,10 +1986,56 @@ function renderAdminHTML() {
 
       <div class="modal-footer" style="margin-top: 16px;">
         <button type="button" class="btn btn-gray" onclick="closeUploadModal()">Hủy</button>
-        <button type="button" class="btn btn-green" id="btnConfirmUpload" disabled onclick="executeBulkImport()">+ Xác nhận Nhập dữ liệu</button>
+        <button type="button" class="btn btn-green" id="btnConfirmUpload" disabled onclick="executeBulkImport()">Nhập dữ liệu</button>
       </div>
     </div>
   </div>
+  </div>
+
+  <!-- MODAL TẠO KÍCH HOẠT MỚI -->
+  <div class="modal-backdrop" id="createLicenseModal">
+    <div class="modal-box" style="max-width: 520px;">
+      <div class="modal-header">
+        <h3 id="createLicenseModalTitle">➕ Thêm Kích hoạt Mới</h3>
+        <span class="close-btn" onclick="closeCreateLicenseModal()">&times;</span>
+      </div>
+      
+      <div class="form-group">
+        <label>SERIAL (*)</label>
+        <input type="text" id="addSerial" placeholder="Ví dụ: G6AY8400E7W">
+      </div>
+      <div class="form-group">
+        <label>PHIÊN BẢN (*)</label>
+        <select id="addRomSelect"></select>
+      </div>
+      <div class="form-group">
+        <label>TRẠNG THÁI KEY</label>
+        <select id="addStatus">
+          <option value="OK">OK (Kích hoạt)</option>
+          <option value="DEL">DEL (Xóa)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>EMAIL/SĐT</label>
+        <input type="text" id="addEmail" placeholder="Nhập Email hoặc SĐT khách">
+      </div>
+      <div class="form-group">
+        <label>QUỐC GIA</label>
+        <select id="addCountry">
+          <option value="VN">VN (Gửi mail tiếng Việt)</option>
+          <option value="Other">Other (Gửi mail tiếng Anh)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>GHI CHÚ</label>
+        <input type="text" id="addNote" placeholder="Ghi chú thiết bị/khách hàng">
+      </div>
+
+      <div class="modal-actions" style="margin-top: 20px; display: flex; justify-content: flex-end; gap: 10px;">
+        <button class="btn btn-gray" onclick="closeCreateLicenseModal()">Hủy</button>
+        <button class="btn btn-green" id="btnSaveNewLicense" onclick="handleCreateLicense()">+ Thêm Kích hoạt</button>
+      </div>
+    </div>
   </div>
 
   <!-- MODAL TẠO / SỬA GIFT CODE -->
@@ -2060,10 +2084,13 @@ function renderAdminHTML() {
       
       <input type="hidden" id="editId">
       <div class="form-group">
-        <label>SHARD TĨNH (PREFIX)</label>
-        <div style="display: flex; gap: 10px; align-items: center;">
-          <input type="text" id="editPrefix" disabled style="max-width: 140px; font-weight: bold; font-family: monospace;">
-          <a id="editPrefixLink" href="#" target="_blank" class="btn btn-blue" style="text-decoration: none; font-size: 12px; padding: 9px 14px;">📂 Xem file JSON tĩnh</a>
+        <label>JSON RAW</label>
+        <div>
+          <a id="editPrefixLink" href="#" target="_blank" class="btn btn-blue" style="display: inline-flex; align-items: center; gap: 8px; text-decoration: none; font-family: monospace; font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 6px;" title="Mở file JSON RAW">
+            <span>🚀</span>
+            <span id="editPrefixText">json/unk.json</span>
+            <span style="font-size: 11px; opacity: 0.85;">↗</span>
+          </a>
         </div>
       </div>
       <div class="form-group">
@@ -2257,21 +2284,10 @@ function renderAdminHTML() {
 
       const titles = {
         listTab: "Danh sách Kích hoạt",
-        createTab: "Kích hoạt mới",
         giftTab: "Quản lý Gift Code",
         romTab: "Quản lý Sản phẩm"
       };
-      document.getElementById("topbarTitle").innerText = titles[tabId];
-
-      const syncBtn = document.getElementById("btnSyncShards");
-      if (syncBtn) {
-        syncBtn.style.display = (tabId === "listTab") ? "inline-flex" : "none";
-      }
-
-      const uploadBtn = document.getElementById("btnUploadLicense");
-      if (uploadBtn) {
-        uploadBtn.style.display = (tabId === "listTab") ? "inline-flex" : "none";
-      }
+      document.getElementById("topbarTitle").innerText = titles[tabId] || "";
 
       if (window.innerWidth <= 768) toggleSidebar(false);
     }
@@ -2379,13 +2395,14 @@ function renderAdminHTML() {
       }
       while (cleanRepo.startsWith("/")) cleanRepo = cleanRepo.slice(1);
       while (cleanRepo.endsWith("/")) cleanRepo = cleanRepo.slice(0, -1);
+      if (cleanRepo.endsWith(".git")) cleanRepo = cleanRepo.slice(0, -4);
 
       if (!cleanRepo) {
         const rawDomain = systemData.pages_domain || "";
         const pagesBase = rawDomain.endsWith("/") ? rawDomain.slice(0, -1) : rawDomain;
         return pagesBase ? (pagesBase + "/" + filePath) : ("/" + filePath);
       }
-      return "https://github.com/" + cleanRepo + "/blob/main/" + filePath;
+      return "https://raw.githubusercontent.com/" + cleanRepo + "/main/" + filePath;
     }
 
     function onLicenseSearchChange() {
@@ -2612,7 +2629,7 @@ function renderAdminHTML() {
                 '<span class="badge badge-shard">🚀 json/' + item.prefix + '.json</span>' +
               '</a>' +
             '</td>' +
-            '<td>' + (item.note || "") + '</td>' +
+            '<td class="col-note">' + (item.note || "") + '</td>' +
           '</tr>';
         }).join('');
       }
@@ -2779,7 +2796,7 @@ function renderAdminHTML() {
             '<td><code>' + item.start_date + '</code></td>' +
             '<td><code>' + item.expiration_date + '</code></td>' +
             '<td>' + statusBadge + '</td>' +
-            '<td>' + (item.note || "-") + '</td>' +
+            '<td class="col-note">' + (item.note || "-") + '</td>' +
             '<td style="text-align: center;">' +
               '<button type="button" class="btn btn-blue" style="padding: 4px 8px; font-size: 11px; margin-right: 4px;" onclick="openEditGiftModal(' + item.id + ')">Sửa</button>' +
               '<button type="button" class="btn btn-red" style="padding: 4px 8px; font-size: 11px;" data-code="' + item.gift_code + '" onclick="handleDeleteGiftKey(' + item.id + ', this.dataset.code)">Xóa</button>' +
@@ -2844,7 +2861,7 @@ function renderAdminHTML() {
             '<option value="NONE"' + (item.gmail_notify === 'NONE' ? ' selected' : '') + '>NONE</option>' +
             '<option value="SENT"' + (item.gmail_notify === 'SENT' ? ' selected' : '') + '>SENT</option>' +
           '</select></td>' +
-          '<td><input type="text" class="bulk-cell-input bulk-note" value="' + (item.note || "") + '"></td>' +
+          '<td class="col-note"><input type="text" class="bulk-cell-input bulk-note" value="' + (item.note || "") + '"></td>' +
         '</tr>';
       }).join("");
 
@@ -2962,7 +2979,7 @@ function renderAdminHTML() {
           '<td><input type="text" class="bulk-cell-input bulk-gift-code" value="' + (item.gift_code || "") + '" style="font-family: monospace; font-weight: bold; text-transform: uppercase;"></td>' +
           '<td><input type="date" class="bulk-cell-input bulk-gift-start" value="' + (item.start_date || "") + '"></td>' +
           '<td><input type="date" class="bulk-cell-input bulk-gift-exp" value="' + (item.expiration_date || "") + '"></td>' +
-          '<td><input type="text" class="bulk-cell-input bulk-gift-note" value="' + (item.note || "") + '"></td>' +
+          '<td class="col-note"><input type="text" class="bulk-cell-input bulk-gift-note" value="' + (item.note || "") + '"></td>' +
         '</tr>';
       }).join("");
 
@@ -3045,7 +3062,7 @@ function renderAdminHTML() {
       fileNameEl.innerText = "Nhấp để chọn tệp Excel hoặc kéo thả vào đây";
       summaryEl.innerText = "";
       confirmBtn.disabled = true;
-      confirmBtn.innerText = "+ Xác nhận Nhập dữ liệu";
+      confirmBtn.innerText = "Nhập dữ liệu"; 
 
       previewTable.querySelector("thead").innerHTML = "";
       previewTable.querySelector("tbody").innerHTML = '<tr><td style="text-align: center; color: var(--text-muted); padding: 16px;">Chưa chọn tệp tin nào.</td></tr>';
@@ -3375,12 +3392,17 @@ function renderAdminHTML() {
       if (!currentSelectedItem) return;
 
       const prefix = currentSelectedItem.prefix || "unk";
-      const rawDomain = systemData.pages_domain || "";
-      const pagesBase = rawDomain.endsWith("/") ? rawDomain.slice(0, -1) : rawDomain;
-      const linkHref = pagesBase ? (pagesBase + "/json/" + prefix + ".json") : ("/json/" + prefix + ".json");
+      const rawUrl = getGithubFileUrl("json/" + prefix + ".json");
       document.getElementById("editId").value = currentSelectedItem.id;
-      document.getElementById("editPrefix").value = "json/" + prefix + ".json";
-      document.getElementById("editPrefixLink").href = linkHref;
+      const prefixLink = document.getElementById("editPrefixLink");
+      const prefixText = document.getElementById("editPrefixText");
+      if (prefixLink) {
+        prefixLink.href = rawUrl;
+        prefixLink.title = "Mở file JSON RAW: " + rawUrl;
+      }
+      if (prefixText) {
+        prefixText.innerText = "json/" + prefix + ".json";
+      }
       document.getElementById("editSerial").value = currentSelectedItem.serial;
       document.getElementById("editRomSelect").value = currentSelectedItem.rom_version;
       document.getElementById("editStatus").value = currentSelectedItem.key_status;
@@ -3453,6 +3475,17 @@ function renderAdminHTML() {
       }
     }
 
+    function openCreateLicenseModal() {
+      document.getElementById("addSerial").value = "";
+      document.getElementById("addEmail").value = "";
+      document.getElementById("addNote").value = "";
+      document.getElementById("createLicenseModal").style.display = "flex";
+    }
+
+    function closeCreateLicenseModal() {
+      document.getElementById("createLicenseModal").style.display = "none";
+    }
+
     async function handleCreateLicense() {
       const serial = document.getElementById("addSerial").value.trim();
       const rom_version = document.getElementById("addRomSelect").value;
@@ -3472,12 +3505,12 @@ function renderAdminHTML() {
         return showToast(res.error || "Không thể tạo bản ghi!", "error");
       }
 
+      closeCreateLicenseModal();
       document.getElementById("addSerial").value = "";
       document.getElementById("addEmail").value = "";
       document.getElementById("addNote").value = "";
       showToast(res.message || ("Đã thêm thiết bị mới thành công (Shard: json/" + res.prefix + ".json)!"), "success", 6000);
       await loadAllData();
-      switchTab('listTab', document.querySelectorAll('.nav-item')[0]);
     }
 
     async function handleSyncAllPrefixes() {
@@ -3508,7 +3541,7 @@ function renderAdminHTML() {
 
     async function handleDeleteRom(name) {
       const confirmed = await showConfirm(
-        "Xác nhận xóa danh mục",
+        "Xác nhận xóa",
         'Bạn có chắc chắn muốn xóa "' + name + '"?',
         true
       );
