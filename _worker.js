@@ -1331,31 +1331,44 @@ function renderAdminHTML() {
       width: 100%;
     }
     .date-input-wrap input[type="text"] {
-      width: 100%;
-      padding-right: 38px;
+      width: 100% !important;
+      padding-right: 42px !important;
       font-family: monospace, -apple-system, sans-serif;
+      cursor: text !important;
     }
-    .date-picker-icon {
+    .date-picker-btn {
       position: absolute;
-      right: 12px;
-      pointer-events: none;
-      font-size: 15px;
-      line-height: 1;
-      opacity: 0.7;
-    }
-    .native-date-hidden {
-      position: absolute;
-      right: 4px;
+      right: 6px;
       top: 50%;
       transform: translateY(-50%);
-      width: 32px;
-      height: 32px;
-      opacity: 0;
-      cursor: pointer;
+      background: transparent;
       border: none;
-      padding: 0;
-      margin: 0;
-      z-index: 2;
+      cursor: pointer;
+      padding: 4px 6px;
+      font-size: 16px;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      transition: background 0.2s;
+      z-index: 3;
+    }
+    .date-picker-btn:hover {
+      background: var(--table-hover);
+    }
+    .native-date-hidden {
+      position: absolute !important;
+      opacity: 0 !important;
+      pointer-events: none !important;
+      width: 1px !important;
+      height: 1px !important;
+      bottom: 0 !important;
+      right: 0 !important;
+      border: none !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      z-index: -1 !important;
     }
 
     .btn { padding: 9px 16px; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 13px; transition: 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
@@ -2090,7 +2103,7 @@ function renderAdminHTML() {
         <label>NGÀY TẠO (YYYY-MM-DD) (*)</label>
         <div class="date-input-wrap">
           <input type="text" id="giftStartDate" placeholder="YYYY-MM-DD" pattern="\d{4}-\d{2}-\d{2}" maxlength="10" oninput="syncInputToDatePicker('giftStartDate', 'giftStartDatePicker')">
-          <span class="date-picker-icon" title="Chọn ngày từ lịch">📅</span>
+          <button type="button" class="date-picker-btn" onclick="openNativeDatePicker('giftStartDatePicker')" title="Chọn ngày từ lịch">📅</button>
           <input type="date" id="giftStartDatePicker" class="native-date-hidden" onchange="syncDatePickerToInput('giftStartDatePicker', 'giftStartDate')">
         </div>
       </div>
@@ -2098,7 +2111,7 @@ function renderAdminHTML() {
         <label>NGÀY HẾT HẠN (YYYY-MM-DD) (*)</label>
         <div class="date-input-wrap">
           <input type="text" id="giftExpDate" placeholder="YYYY-MM-DD" pattern="\d{4}-\d{2}-\d{2}" maxlength="10" oninput="syncInputToDatePicker('giftExpDate', 'giftExpDatePicker')">
-          <span class="date-picker-icon" title="Chọn ngày từ lịch">📅</span>
+          <button type="button" class="date-picker-btn" onclick="openNativeDatePicker('giftExpDatePicker')" title="Chọn ngày từ lịch">📅</button>
           <input type="date" id="giftExpDatePicker" class="native-date-hidden" onchange="syncDatePickerToInput('giftExpDatePicker', 'giftExpDate')">
         </div>
       </div>
@@ -3398,6 +3411,23 @@ function renderAdminHTML() {
       }
     }
 
+    function openNativeDatePicker(pickerId) {
+      const picker = document.getElementById(pickerId);
+      if (!picker) return;
+      const inputId = pickerId === 'giftStartDatePicker' ? 'giftStartDate' : 'giftExpDate';
+      const textInput = document.getElementById(inputId);
+      if (textInput && /^\d{4}-\d{2}-\d{2}$/.test(textInput.value.trim())) {
+        picker.value = textInput.value.trim();
+      }
+      if (typeof picker.showPicker === 'function') {
+        try {
+          picker.showPicker();
+          return;
+        } catch (e) {}
+      }
+      picker.focus();
+    }
+
     function syncInputToDatePicker(inputId, pickerId) {
       const val = (document.getElementById(inputId).value || "").trim();
       if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
@@ -3469,7 +3499,7 @@ function renderAdminHTML() {
       const expiration_date = document.getElementById("giftExpDate").value.trim();
       const note = document.getElementById("giftNote").value.trim();
 
-      if (!gift_code) return showToast("Vui lòng nhập GIFT_CODE!", "warn");
+      if (!gift_code) return showToast("Vui lòng nhập GIFT CODE!", "warn");
       if (!start_date || !expiration_date) return showToast("Vui lòng chọn ngày bắt đầu và kết thúc!", "warn");
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
       if (!dateRegex.test(start_date) || !dateRegex.test(expiration_date)) {
@@ -3653,7 +3683,7 @@ function renderAdminHTML() {
     async function handleCreateLicense() {
       const serial = document.getElementById("addSerial").value.trim();
       const rom_version = document.getElementById("addRomSelect").value;
-      if (!serial) return showToast("Vui lòng nhập Serial!", "warn");
+      if (!serial) return showToast("Vui lòng nhập SERIAL!", "warn");
 
       const saveBtn = document.getElementById("btnSaveNewLicense");
       setBtnLoading(saveBtn, true, "Đang tạo...");
@@ -3708,7 +3738,7 @@ function renderAdminHTML() {
 
     async function handleAddRom() {
       const name = document.getElementById("newRomName").value.trim();
-      if (!name) return showToast("Vui lòng nhập tên Sản phẩm!", "warn");
+      if (!name) return showToast("Vui lòng nhập PHIÊN BẢN!", "warn");
       const btn = document.getElementById("btnAddRom");
       setBtnLoading(btn, true, "Đang thêm...");
       try {
