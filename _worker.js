@@ -14,7 +14,7 @@ export default {
     // =========================================================================
     // 0. BỘ ĐẾM TOÀN DIỆN MỌI REQUEST CỦA PROJECT LICENSE (CHẠY NỀN QUA ctx.waitUntil)
     // =========================================================================
-    if (env.DB && url.pathname !== "/api/admin/version") {
+    if (env.DB) {
       ctx.waitUntil(
         env.DB.prepare(`
           INSERT INTO system_stats (date_key, service_type, req_count)
@@ -251,20 +251,6 @@ export default {
           used: licenseUsage,
           remaining: Math.max(0, MAX_LICENSE_REQ - licenseUsage)
         }
-      });
-    }
-
-    if (url.pathname === "/api/admin/version" && request.method === "GET") {
-      if (!isAuthed) return jsonResponse({ error: "Unauthorized" }, 401);
-      if (!env.DB) return jsonResponse({ success: true, version: 0 });
-
-      const versionRes = await env.DB.prepare(
-        "SELECT req_count FROM system_stats WHERE date_key = 'SYSTEM' AND service_type = 'DB_VERSION'"
-      ).first();
-
-      return jsonResponse({
-        success: true,
-        version: versionRes ? (versionRes.req_count || 0) : 0
       });
     }
 
@@ -2471,44 +2457,10 @@ function renderAdminHTML() {
       document.getElementById("topbarTitle").innerText = titles[tabId] || "";
 
       if (window.innerWidth <= 768) toggleSidebar(false);
-
-      if (tabId === "listTab" || tabId === "giftTab") {
-        checkAndSyncIfNewer(tabId);
-      }
-    }
-
-    let clientDbVersion = 0;
-    let isCheckingVersion = false;
-
-    /**
-     * Tự động kiểm tra phiên bản DB siêu nhẹ (0 tốn req quota) và cập nhật dữ liệu khi phát hiện thay đổi từ thiết bị khác
-     */
-    async function checkAndSyncIfNewer(sourceTab) {
-      if (!currentAuthToken || isCheckingVersion) return;
-      isCheckingVersion = true;
-      try {
-        const res = await fetch("/api/admin/version", {
-          headers: { "Authorization": "Bearer " + currentAuthToken }
-        });
-        if (res.status === 401) return logout();
-        if (res.ok) {
-          const data = await res.json();
-          if (data.version && data.version > clientDbVersion) {
-            console.log("Phát hiện dữ liệu mới trên máy chủ (version:", data.version, ">", clientDbVersion, "), đang đồng bộ...");
-            clientDbVersion = data.version;
-            await loadAllData();
-            showToast("Đã tự động cập nhật dữ liệu mới nhất!", "info");
-          }
-        }
-      } catch (e) {
-        console.warn("Lỗi kiểm tra phiên bản:", e);
-      } finally {
-        isCheckingVersion = false;
-      }
     }
 
     /**
-     * Nút bấm Đồng bộ dữ liệu thủ công trên Topbar
+     * Nút bấm Đồng bộ dữ liệu thủ công trên Topbar (phát sinh đúng 1 request thực tế)
      */
     async function manualSyncData() {
       const icon = document.getElementById("syncDataIcon");
@@ -2525,15 +2477,6 @@ function renderAdminHTML() {
         if (btn) btn.disabled = false;
       }
     }
-
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") {
-        const activeTab = document.querySelector(".tab-content.active")?.id;
-        if (activeTab === "listTab" || activeTab === "giftTab") {
-          checkAndSyncIfNewer("visibility");
-        }
-      }
-    });
 
     async function verifyLogin() {
       const pwd = document.getElementById("authPasswordInput").value.trim();
@@ -2596,9 +2539,6 @@ function renderAdminHTML() {
         if (res.status === 401) return logout();
 
         systemData = await res.json();
-        if (systemData.db_version) {
-          clientDbVersion = systemData.db_version;
-        }
         if (systemData.error) {
           showToast(systemData.error, "warn");
         }
