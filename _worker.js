@@ -1288,19 +1288,21 @@ function renderAdminHTML() {
         } else {
           bar.style.background = "#38bdf8";
         }
-      } catch (err) {
-        showToast("Lỗi tải dữ liệu: " + err.message, "error");
       }
+    } catch (err) {
+      showToast("Lỗi tải dữ liệu: " + err.message, "error");
+    }
+  }
+
+  function renderLicenseTable() {
+    const tbody = document.getElementById("licenseTableBody");
+    if (!systemData.licenses.length) {
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; color:var(--text-muted);">Chưa có bản ghi nào.</td></tr>';
+      return;
     }
 
-    function renderLicenseTable() {
-      const tbody = document.getElementById("licenseTableBody");
-      if (!systemData.licenses.length) {
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; color:var(--text-muted);">Chưa có bản ghi nào.</td></tr>';
-        return;
-      }
-
-      const pagesBase = (systemData.pages_domain || "").replace(/\/+$/, '');
+    const rawDomain = systemData.pages_domain || "";
+    const pagesBase = rawDomain.endsWith("/") ? rawDomain.slice(0, -1) : rawDomain;
       tbody.innerHTML = systemData.licenses.map(item => {
         const linkHref = pagesBase ? (pagesBase + "/" + item.prefix + ".json") : ("/" + item.prefix + ".json");
         return \`
@@ -1348,7 +1350,8 @@ function renderAdminHTML() {
       if (!currentSelectedItem) return;
 
       const prefix = currentSelectedItem.prefix || "unk";
-      const pagesBase = (systemData.pages_domain || "").replace(/\/+$/, '');
+      const rawDomain = systemData.pages_domain || "";
+      const pagesBase = rawDomain.endsWith("/") ? rawDomain.slice(0, -1) : rawDomain;
       const linkHref = pagesBase ? (pagesBase + "/" + prefix + ".json") : ("/" + prefix + ".json");
       document.getElementById("editStt").value = currentSelectedItem.stt;
       document.getElementById("editPrefix").value = prefix + ".json";
