@@ -84,13 +84,14 @@ export default {
       await ensureDbSchema(env);
       const MAX_LICENSE_REQ = 50000; // Trần 50.000 req dành riêng cho License
 
-      // Truy vấn đồng thời dữ liệu bản quyền, ROM, request quota, Gift keys và phiên bản DB
-      const [licensesRes, romsRes, statsRes, giftKeysRes, versionRes] = await Promise.all([
+      // Truy vấn đồng thời dữ liệu bản quyền, ROM, request quota, Gift keys, phiên bản DB và cài đặt
+      const [licensesRes, romsRes, statsRes, giftKeysRes, versionRes, autoEmailRes] = await Promise.all([
         env.DB.prepare("SELECT * FROM licenses ORDER BY id DESC").all(),
         env.DB.prepare("SELECT * FROM rom_categories ORDER BY name ASC").all(),
         env.DB.prepare("SELECT req_count FROM system_stats WHERE date_key = ? AND service_type = 'LICENSE'").bind(today).first(),
         env.DB.prepare("SELECT * FROM gift_keys ORDER BY created_at DESC").all(),
-        env.DB.prepare("SELECT req_count FROM system_stats WHERE date_key = 'SYSTEM' AND service_type = 'DB_VERSION'").first()
+        env.DB.prepare("SELECT req_count FROM system_stats WHERE date_key = 'SYSTEM' AND service_type = 'DB_VERSION'").first(),
+        env.DB.prepare("SELECT req_count FROM system_stats WHERE date_key = 'SETTINGS' AND service_type = 'AUTO_SEND_EMAIL'").first()
       ]);
 
       const licenseUsage = statsRes ? (statsRes.req_count || 0) : 0;
@@ -107,6 +108,7 @@ export default {
         github_repo: env.GITHUB_REPO ? String(env.GITHUB_REPO).trim() : '',
         pages_domain: env.PAGES_DOMAIN ? env.PAGES_DOMAIN.replace(/\/+$/, '') : '',
         db_version: currentDbVersion,
+        auto_send_email: autoEmailRes ? (autoEmailRes.req_count === 1) : false,
         license_quota: {
           limit: MAX_LICENSE_REQ,
           used: licenseUsage,
@@ -127,7 +129,8 @@ export default {
         "add_rom", "delete_rom",
         "bulk_delete_licenses", "bulk_update_licenses", "bulk_import_licenses",
         "bulk_delete_gift_keys", "bulk_update_gift_keys",
-        "bulk_import_roms"
+        "bulk_import_roms",
+        "update_setting_auto_email"
       ]);
       if (mutatingActions.has(action)) {
         ctx.waitUntil(bumpDbVersion(env));
@@ -150,10 +153,65 @@ export default {
         await ensureDbSchema(env);
         const prefix = getDevicePrefix(serial);
 
-        await env.DB.prepare(
+        const now = Date.now();
+        const insertRes = await env.DB.prepare(
           `INSERT INTO licenses (serial, rom_version, key_status, email_phone, country, gmail_notify, note, created_at, prefix)
            VALUES (?, ?, ?, ?, ?, 'NONE', ?, ?, ?)`
-        ).bind(serial, rom_version, key_status || 'OK', email_phone || '', country || 'VN', note || '', Date.now(), prefix).run();
+        ).bind(serial, rom_version, key_status || 'OK', email_phone || '', country || 'VN', note || '', now, prefix).run();
+
+        const newId = insertRes.meta?.last_row_id;
+
+        // KIỂM TRA ĐIỀU KIỆN TỰ ĐỘNG GỬI EMAIL SAU 60 GIÂY
+        if (newId && env.GAS_WEBAPP_URL) {
+          const autoEmailSetting = await env.DB.prepare("SELECT req_count FROM system_stats WHERE date_key = 'SETTINGS' AND service_type = 'AUTO_SEND_EMAIL'").first();
+          const isAutoEmailEnabled = autoEmailSetting ? autoEmailSetting.req_count === 1 : false;
+
+          const hasEmail = email_phone && email_phone.includes("@");
+          const isSerialNotEmpty = serial && serial.trim() !== "";
+          const isRomNotEmpty = rom_version && rom_version.trim() !== "";
+          const isKeyOk = (key_status || 'OK') === 'OK';
+
+          if (isAutoEmailEnabled && hasEmail && isSerialNotEmpty && isRomNotEmpty && isKeyOk) {
+            ctx.waitUntil((async () => {
+              try {
+                // Đợi 60 giây ngầm trên Server
+                await new Promise(resolve => setTimeout(resolve, 60000));
+                const item = await env.DB.prepare("SELECT * FROM licenses WHERE id = ?").bind(newId).first();
+                if (!item || item.key_status !== "OK" || item.gmail_notify !== "NONE" || !item.email_phone || !item.email_phone.includes("@")) {
+                  return; // Không đủ điều kiện hoặc đã bị sửa
+                }
+                const gasRes = await fetch(env.GAS_WEBAPP_URL, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  redirect: "follow",
+                  body: JSON.stringify({
+                    secret: env.INTERNAL_SECRET,
+                    email: item.email_phone,
+                    serial: item.serial,
+                    rom_version: item.rom_version,
+                    country: item.country
+                  })
+                });
+                const gasText = await gasRes.text();
+                let gasJson = {};
+                try { gasJson = JSON.parse(gasText); } catch (_) {}
+
+                if (gasJson.success) {
+                  await env.DB.prepare("UPDATE licenses SET gmail_notify = 'SENT' WHERE id = ?").bind(newId).run();
+                } else {
+                  await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(newId).run();
+                }
+                await bumpDbVersion(env);
+              } catch (err) {
+                console.error("Lỗi gửi email tự động 60s:", err);
+                try {
+                  await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(newId).run();
+                  await bumpDbVersion(env);
+                } catch (_) {}
+              }
+            })());
+          }
+        }
 
         // Tự động đẩy file phân mảnh lên GitHub Repo cho Cloudflare Pages
         const gitRes = await syncShardToGitHub(env, prefix);
@@ -522,6 +580,15 @@ export default {
           }
         }
         return jsonResponse({ success: true, count: stmts.length, message: `Đã thêm thành công ${stmts.length} sản phẩm!` });
+      }
+      else if (action === "update_setting_auto_email") {
+        const isEnabled = body.enabled ? 1 : 0;
+        await env.DB.prepare(`
+          INSERT INTO system_stats (date_key, service_type, req_count)
+          VALUES ('SETTINGS', 'AUTO_SEND_EMAIL', ?)
+          ON CONFLICT(date_key, service_type) DO UPDATE SET req_count = ?
+        `).bind(isEnabled, isEnabled).run();
+        return jsonResponse({ success: true, enabled: isEnabled === 1 });
       }
       else if (action === "resend_mail") {
         const item = await env.DB.prepare("SELECT * FROM licenses WHERE id = ?").bind(body.id).first();
@@ -1315,6 +1382,84 @@ function renderAdminHTML() {
     .badge-NONE { background: var(--table-hover); color: var(--text-muted); border-color: var(--border-color); }
     .badge-shard { background: var(--badge-shard-bg); color: var(--badge-shard-color); border-color: var(--badge-shard-border); font-family: monospace; font-size: 11px; }
 
+    /* BADGE ĐẾM LÙI 60S */
+    .badge-COUNTDOWN {
+      background: #fef3c7;
+      color: #b45309;
+      border: 1px solid #fcd34d;
+      font-family: monospace;
+      font-weight: 700;
+      animation: pulseCountdown 1.5s infinite;
+    }
+    :root[data-theme="dark"] .badge-COUNTDOWN {
+      background: rgba(245, 158, 11, 0.15);
+      color: #fbbf24;
+      border-color: rgba(245, 158, 11, 0.35);
+    }
+    @keyframes pulseCountdown {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.75; }
+    }
+
+    /* TOGGLE SWITCH CÀI ĐẶT */
+    .setting-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px;
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      background: var(--bg-card);
+      margin-bottom: 12px;
+      gap: 16px;
+    }
+    .setting-info { flex: 1; }
+    .setting-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-main);
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .setting-desc {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 48px;
+      height: 26px;
+      flex-shrink: 0;
+    }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #cbd5e1;
+      transition: .3s;
+      border-radius: 26px;
+    }
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 20px;
+      width: 20px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .3s;
+      border-radius: 50%;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    .toggle-switch input:checked + .toggle-slider { background-color: #16a34a; }
+    .toggle-switch input:checked + .toggle-slider:before { transform: translateX(22px); }
+    :root[data-theme="dark"] .toggle-slider { background-color: #3f3f46; }
+
     .form-group { margin-bottom: 14px; }
     .form-group label { display: block; font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; text-transform: uppercase; }
     .form-group input, .form-group select {
@@ -1672,6 +1817,7 @@ function renderAdminHTML() {
       <li class="nav-item active" onclick="switchTab('listTab', this)">📋 Danh sách Kích hoạt</li>
       <li class="nav-item" onclick="switchTab('giftTab', this)">🎁 Gift Code</li>
       <li class="nav-item" onclick="switchTab('romTab', this)">📁 Sản phẩm</li>
+      <li class="nav-item" onclick="switchTab('settingsTab', this)">⚙️ Cài đặt</li>
     </ul>
     
     <div class="sidebar-footer">
@@ -1927,6 +2073,31 @@ function renderAdminHTML() {
 
         <!-- PAGINATION -->
         <div class="pagination-bar" id="giftPagination"></div>
+      </div>
+    </div>
+
+    <!-- TAB 4: CÀI ĐẶT HỆ THỐNG -->
+    <div id="settingsTab" class="tab-content">
+      <div class="card" style="max-width: 650px; margin: 0 auto 20px auto;">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">
+          <h3 style="margin: 0; font-size: 16px; font-weight: 700;">⚙️ Cài đặt Hệ thống</h3>
+        </div>
+
+        <div class="setting-item">
+          <div class="setting-info">
+            <div class="setting-title">
+              <span>Tự động gửi Email</span>
+              <span id="autoEmailStatusBadge" class="badge badge-OK" style="display: none; font-size: 11px;">Đang bật</span>
+            </div>
+            <div class="setting-desc">
+              Tự động gửi email thông báo kích hoạt sau 60 giây sau khi tạo Kích hoạt mới.
+            </div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="settingAutoSendEmail" onchange="toggleAutoSendEmail(this.checked)">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
       </div>
     </div>
   </div>
@@ -2367,7 +2538,8 @@ function renderAdminHTML() {
       const titles = {
         listTab: "Quản lý Kích hoạt",
         giftTab: "Quản lý Gift Code",
-        romTab: "Quản lý Sản phẩm"
+        romTab: "Quản lý Sản phẩm",
+        settingsTab: "Cài đặt Hệ thống"
       };
       document.getElementById("topbarTitle").innerText = titles[tabId] || "";
 
@@ -2730,7 +2902,23 @@ function renderAdminHTML() {
             '<td><span class="badge badge-' + item.key_status + '">' + item.key_status + '</span></td>' +
             '<td>' + (item.email_phone || "-") + '</td>' +
             '<td>' + item.country + '</td>' +
-            '<td><span class="badge badge-' + item.gmail_notify + '">' + item.gmail_notify + '</span></td>' +
+            (() => {
+            let mailBadgeHtml = '<span class="badge badge-' + item.gmail_notify + '">' + item.gmail_notify + '</span>';
+            if (systemData.auto_send_email && item.gmail_notify === "NONE") {
+              const hasEmail = item.email_phone && item.email_phone.includes("@");
+              const isSerialOk = item.serial && item.serial.trim() !== "";
+              const isRomOk = item.rom_version && item.rom_version.trim() !== "";
+              const isKeyOk = item.key_status === "OK";
+              if (hasEmail && isSerialOk && isRomOk && isKeyOk && item.created_at) {
+                const targetTime = Number(item.created_at) + 60000;
+                const remainingSec = Math.ceil((targetTime - Date.now()) / 1000);
+                if (remainingSec > 0 && remainingSec <= 60) {
+                  mailBadgeHtml = '<span class="badge badge-COUNTDOWN" data-id="' + item.id + '" data-target-time="' + targetTime + '">⏳ ' + remainingSec + 's</span>';
+                }
+              }
+            }
+            return '<td>' + mailBadgeHtml + '</td>';
+          })() +
             '<td>' +
               '<a href="' + linkHref + '" target="_blank" onclick="event.stopPropagation()" title="Mở file JSON trên GitHub Repo" style="text-decoration:none;">' +
                 '<span class="badge badge-shard">🚀 json/' + item.prefix + '.json</span>' +
@@ -2744,6 +2932,7 @@ function renderAdminHTML() {
       updateLicenseBulkToolbar();
       updateCheckAllLicensesState();
       renderPaginationUI("licensePagination", licensePage, totalPages, totalCount, "gotoLicensePage");
+      startGlobalCountdownTracker();
     }
 
     function renderRomDropdowns() {
@@ -3441,6 +3630,71 @@ function renderAdminHTML() {
       const input = document.getElementById(inputId);
       if (picker && input && picker.value) {
         input.value = picker.value;
+      }
+    }
+
+    
+    // =========================================================================
+    // QUẢN LÝ CÀI ĐẶT TỰ ĐỘNG GỬI EMAIL & ĐẾM LÙI 60S
+    // =========================================================================
+    let countdownTrackerTimer = null;
+
+    function startGlobalCountdownTracker() {
+      if (countdownTrackerTimer) clearInterval(countdownTrackerTimer);
+      const badges = document.querySelectorAll(".badge-COUNTDOWN");
+      if (badges.length === 0) return;
+
+      countdownTrackerTimer = setInterval(function() {
+        const activeBadges = document.querySelectorAll(".badge-COUNTDOWN");
+        if (activeBadges.length === 0) {
+          clearInterval(countdownTrackerTimer);
+          countdownTrackerTimer = null;
+          return;
+        }
+
+        activeBadges.forEach(function(badge) {
+          const targetTime = Number(badge.getAttribute("data-target-time"));
+          const remaining = Math.ceil((targetTime - Date.now()) / 1000);
+          if (remaining > 0) {
+            badge.innerText = "⏳ " + remaining + "s";
+          } else {
+            badge.className = "badge badge-SENT";
+            badge.innerText = "SENT";
+            const id = Number(badge.getAttribute("data-id"));
+            const found = (systemData.licenses || []).find(l => l.id === id);
+            if (found) found.gmail_notify = "SENT";
+            if (currentSelectedItem && currentSelectedItem.id === id) {
+              currentSelectedItem.gmail_notify = "SENT";
+              const sendBtn = document.getElementById("btnSendMail");
+              if (sendBtn) sendBtn.style.display = "none";
+            }
+          }
+        });
+      }, 1000);
+    }
+
+    async function toggleAutoSendEmail(enabled) {
+      systemData.auto_send_email = enabled;
+      updateAutoEmailBadge(enabled);
+      try {
+        await sendAdminAction({ action: "update_setting_auto_email", enabled: enabled }, "Đang lưu cài đặt...");
+        showToast(enabled ? "Đã bật tự động gửi email sau 60s!" : "Đã tắt tự động gửi email!", "success");
+        renderLicenseTable();
+      } catch (err) {
+        showToast("Lỗi lưu cài đặt: " + err.message, "error");
+        const toggle = document.getElementById("settingAutoSendEmail");
+        if (toggle) toggle.checked = !enabled;
+        systemData.auto_send_email = !enabled;
+        updateAutoEmailBadge(!enabled);
+      }
+    }
+
+    function updateAutoEmailBadge(enabled) {
+      const badge = document.getElementById("autoEmailStatusBadge");
+      if (badge) {
+        badge.style.display = "inline-block";
+        badge.className = "badge " + (enabled ? "badge-OK" : "badge-DEL");
+        badge.innerText = enabled ? "Đang bật" : "Đã tắt";
       }
     }
 
