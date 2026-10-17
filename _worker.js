@@ -1865,7 +1865,7 @@ function renderAdminHTML() {
           <span>LICENSE REQ CÒN LẠI</span>
           <span id="quotaPercent">100%</span>
         </div>
-        <div class="quota-number" id="quotaRemainingText">50,000 / 50,000</div>
+        <div class="quota-number" id="quotaRemainingText">10,000 / 10,000</div>
         <div class="quota-sub" id="quotaUsedText">Đã dùng hôm nay: 0 req</div>
         <div class="quota-bar-bg">
           <div class="quota-bar-fill" id="quotaProgress" style="width: 100%;"></div>
@@ -2054,7 +2054,7 @@ function renderAdminHTML() {
           </div>
           <div class="tab-header-actions">
             <a id="giftShardBadgeLink" href="/json/giftcode.json" target="_blank" title="Mở file JSON RAW trên GitHub Repo" style="text-decoration:none;">
-              <span class="badge badge-shard" style="padding: 7px 14px; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; cursor: pointer; width: 100%;">🚀 json/giftcode.json</span>
+              <span class="badge badge-shard" style="padding: 7px 14px; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; cursor: pointer; width: 100%;">json/giftcode.json</span>
             </a>
             <button class="btn btn-green" style="padding: 7px 14px; font-size: 12px;" onclick="openCreateGiftModal()">+ Tạo Gift Code</button>
           </div>
@@ -2349,7 +2349,7 @@ function renderAdminHTML() {
         <label>JSON RAW</label>
         <div>
           <a id="editPrefixLink" href="#" target="_blank" class="btn btn-blue" style="display: inline-flex; align-items: center; gap: 8px; text-decoration: none; font-family: monospace; font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 6px;" title="Mở file JSON RAW">
-            <span>🚀</span>
+            <!--<span>🚀</span>-->
             <span id="editPrefixText">json/unk.json</span>
             <span style="font-size: 11px; opacity: 0.85;">↗</span>
           </a>
@@ -2969,7 +2969,7 @@ function renderAdminHTML() {
                 const targetTime = Number(item.created_at) + 60000;
                 const remainingSec = Math.ceil((targetTime - Date.now()) / 1000);
                 if (remainingSec > 0 && remainingSec <= 60) {
-                  mailBadgeHtml = '<span class="badge badge-COUNTDOWN" data-id="' + item.id + '" data-target-time="' + targetTime + '">⏳ ' + remainingSec + 's</span>';
+                  mailBadgeHtml = '<span class="badge badge-COUNTDOWN" data-id="' + item.id + '" data-target-time="' + targetTime + '">' + remainingSec + 's</span>';
                 } else if (remainingSec <= 0) {
                   mailBadgeHtml = '<span class="badge badge-off">Đang gửi...</span>';
                 }
@@ -2979,7 +2979,8 @@ function renderAdminHTML() {
           })() +
             '<td>' +
               '<a href="' + linkHref + '" target="_blank" onclick="event.stopPropagation()" title="Mở file JSON trên GitHub Repo" style="text-decoration:none;">' +
-                '<span class="badge badge-shard">🚀 json/' + item.prefix + '.json</span>' +
+                '<!--<span class="badge badge-shard">🚀 json/' + item.prefix + '.json</span>-->' +
+                '<span class="badge badge-shard">json/' + item.prefix + '.json</span>' +
               '</a>' +
             '</td>' +
             '<td class="col-note">' + (item.note || "") + '</td>' +
@@ -3747,12 +3748,12 @@ function renderAdminHTML() {
             badge.removeAttribute("data-target-time");
             const id = Number(badge.getAttribute("data-id"));
 
-            // Đổi trạng thái sang "Đang gửi..." trên tất cả các máy
+            // Đổi trạng thái sang "Chờ gửi..." trên tất cả các máy
             badge.className = "badge badge-off";
-            badge.innerText = "Đang gửi...";
+            badge.innerText = "Chờ gửi...";
 
             // TỐI ƯU REQUEST: Chỉ máy trực tiếp bấm nút tạo mới mới gửi API
-            // Các máy 2, 3, 4,... khác sau khi đếm xong CHỈ chuyển sang "Đang gửi...", không gửi request
+            // Các máy 2, 3, 4,... khác sau khi đếm xong CHỈ chuyển sang "Chờ gửi...", không gửi request
             if (isMyCreatedLicense(id)) {
               unmarkMyCreatedLicense(id);
               triggerAutoSendEmail(id, badge);
