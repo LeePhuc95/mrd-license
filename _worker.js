@@ -77,12 +77,12 @@ export default {
           licenses: [],
           rom_categories: [],
           pages_domain: env.PAGES_DOMAIN ? env.PAGES_DOMAIN.replace(/\/+$/, '') : '',
-          license_quota: { limit: 50000, used: 0, remaining: 50000 }
+          license_quota: { limit: 10000, used: 0, remaining: 10000 }
         });
       }
 
       await ensureDbSchema(env);
-      const MAX_LICENSE_REQ = 50000; // Trần 50.000 req dành riêng cho License
+      const MAX_LICENSE_REQ = 10000; // Trần 10.000 req dành riêng cho License
 
       // Truy vấn đồng thời dữ liệu bản quyền, ROM, request quota, Gift keys, phiên bản DB và cài đặt
       const [licensesRes, romsRes, statsRes, giftKeysRes, versionRes, autoEmailRes] = await Promise.all([
@@ -2548,6 +2548,14 @@ function renderAdminHTML() {
       };
       document.getElementById("topbarTitle").innerText = titles[tabId] || "";
 
+      if (tabId === "settingsTab" && systemData) {
+        const settingToggle = document.getElementById("settingAutoSendEmail");
+        if (settingToggle) {
+          settingToggle.checked = !!systemData.auto_send_email;
+        }
+        updateAutoEmailBadge(!!systemData.auto_send_email);
+      }
+
       if (window.innerWidth <= 768) toggleSidebar(false);
     }
 
@@ -2634,6 +2642,14 @@ function renderAdminHTML() {
         if (systemData.error) {
           showToast(systemData.error, "warn");
         }
+
+        // Cập nhật trạng thái Cài đặt Hệ thống từ D1 Database lên giao diện
+        const settingToggle = document.getElementById("settingAutoSendEmail");
+        if (settingToggle) {
+          settingToggle.checked = !!systemData.auto_send_email;
+        }
+        updateAutoEmailBadge(!!systemData.auto_send_email);
+
         renderLicenseTable();
         renderRomDropdowns();
         renderRomTable();
@@ -3711,9 +3727,13 @@ function renderAdminHTML() {
       systemData.auto_send_email = enabled;
       updateAutoEmailBadge(enabled);
       try {
-        await sendAdminAction({ action: "update_setting_auto_email", enabled: enabled }, "Đang lưu cài đặt...");
-        showToast(enabled ? "Đã bật tự động gửi email sau 60s!" : "Đã tắt tự động gửi email!", "success");
-        renderLicenseTable();
+        const res = await sendAdminAction({ action: "update_setting_auto_email", enabled: enabled }, "Đang lưu cài đặt...");
+        if (res && res.success !== false) {
+          showToast(enabled ? "Đã bật tự động gửi email sau 60s!" : "Đã tắt tự động gửi email!", "success");
+          renderLicenseTable();
+        } else {
+          throw new Error((res && res.error) || "Không thể lưu cài đặt");
+        }
       } catch (err) {
         showToast("Lỗi lưu cài đặt: " + err.message, "error");
         const toggle = document.getElementById("settingAutoSendEmail");
