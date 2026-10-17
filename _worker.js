@@ -1475,6 +1475,7 @@ function renderAdminHTML() {
     .auth-card input {
       width: 100%; padding: 12px 14px; border: 1px solid var(--input-border); border-radius: 8px;
       background: var(--input-bg); color: var(--text-main); font-size: 15px; margin-bottom: 16px; outline: none; transition: border-color 0.2s;
+      text-align: center;
     }
     .auth-card input:focus { border-color: #0284c7; }
     .auth-card button {
@@ -1651,7 +1652,7 @@ function renderAdminHTML() {
 
     .badge { padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; display: inline-block; border: 1px solid transparent; }
     .badge-OK { background: var(--badge-ok-bg); color: var(--badge-ok-color); border-color: var(--badge-ok-border); }
-    .badge-DEL { background: var(--badge-del-bg); color: var(--badge-del-color); border-color: var(--badge-del-border); }
+    .badge-DEL, .badge-BLOCK, .badge-OFF { background: var(--badge-del-bg); color: var(--badge-del-color); border-color: var(--badge-del-border); }
     .badge-SENT { background: var(--badge-ok-bg); color: var(--badge-ok-color); border-color: var(--badge-ok-border); }
     .badge-ERROR { background: var(--badge-del-bg); color: var(--badge-del-color); border-color: var(--badge-del-border); }
     .badge-NONE { background: var(--table-hover); color: var(--text-muted); border-color: var(--border-color); }
@@ -3508,7 +3509,7 @@ function renderAdminHTML() {
           const isSelected = selectedGiftIds.has(item.id);
           const isExpired = item.expiration_date < todayStr;
           const statusBadge = isExpired
-            ? '<span class="badge badge-OFF">BLOCK</span>'
+            ? '<span class="badge badge-BLOCK">BLOCK</span>'
             : '<span class="badge badge-OK">OK</span>';
 
           return '<tr style="' + (isSelected ? 'background: var(--table-hover);' : '') + '">' +
