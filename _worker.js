@@ -1949,7 +1949,6 @@ function renderAdminHTML() {
           </div>
           <div class="tab-header-actions">
             <button type="button" class="btn btn-green" id="btnUploadLicense" style="padding: 7px 14px; font-size: 12px;" onclick="openUploadModal('license')" title="Tải lên tệp Excel danh sách kích hoạt">📥 Upload Excel</button>
-            <button type="button" class="btn btn-blue" id="btnSyncShards" style="padding: 7px 14px; font-size: 12px;" onclick="handleSyncAllPrefixes()" title="Tính toán lại Prefix và đồng bộ cache phân mảnh">🔄 Đồng bộ Shards</button>
             <button type="button" class="btn btn-green btn-span-full" style="padding: 7px 14px; font-size: 12px;" onclick="openCreateLicenseModal()">+ Thêm mới</button>
           </div>
         </div>
@@ -1959,7 +1958,7 @@ function renderAdminHTML() {
         <!-- FILTER BAR -->
         <div class="filter-bar">
           <div class="search-input-wrap">
-            <span class="search-icon">🔍</span>
+            <!--<span class="search-icon">🔍</span>-->
             <input type="text" id="licenseSearchInput" placeholder="Tìm kiếm Serial, Sản phẩm, Email/SĐT, Ghi chú..." oninput="onLicenseSearchChange()">
           </div>
           <select class="filter-select" id="licenseStatusFilter" onchange="onLicenseSearchChange()">
@@ -2030,7 +2029,7 @@ function renderAdminHTML() {
       <div class="card" style="max-width: 650px; margin: auto;">
         <div class="filter-bar" style="margin-bottom: 12px;">
           <div class="search-input-wrap">
-            <span class="search-icon">🔍</span>
+            <!--<span class="search-icon">🔍</span>-->
             <input type="text" id="romSearchInput" placeholder="Tìm kiếm Sản phẩm..." oninput="onRomSearchChange()">
           </div>
         </div>
@@ -2065,7 +2064,7 @@ function renderAdminHTML() {
         <!-- FILTER BAR -->
         <div class="filter-bar">
           <div class="search-input-wrap">
-            <span class="search-icon">🔍</span>
+            <!--<span class="search-icon">🔍</span>-->
             <input type="text" id="giftSearchInput" placeholder="Tìm kiếm Gift Code, Ghi chú..." oninput="onGiftSearchChange()">
           </div>
           <select class="filter-select" id="giftStatusFilter" onchange="onGiftSearchChange()">
@@ -2135,6 +2134,20 @@ function renderAdminHTML() {
             <input type="checkbox" id="settingAutoSendEmail" onchange="toggleAutoSendEmail(this.checked)">
             <span class="toggle-slider"></span>
           </label>
+        </div>
+
+        <div class="setting-item" style="border-top: 1px solid var(--border-color); padding-top: 16px; margin-top: 16px;">
+          <div class="setting-info">
+            <div class="setting-title">
+              <span>Đồng bộ & Tái tạo Shards GitHub</span>
+            </div>
+            <div class="setting-desc">
+              Tái tạo và đẩy lại toàn bộ các tệp JSON phân mảnh (shards) từ CSDL D1 lên GitHub Repo. Chỉ cần dùng khi mới cài đặt hoặc cần khôi phục dữ liệu trên GitHub.
+            </div>
+          </div>
+          <div>
+            <button type="button" class="btn btn-blue" id="btnSyncShards" style="padding: 8px 16px; font-size: 13px; white-space: nowrap;" onclick="handleSyncAllPrefixes()" title="Tính toán lại Prefix và đồng bộ toàn bộ file JSON lên GitHub">🔄 Đồng bộ Shards</button>
+          </div>
         </div>
       </div>
     </div>
