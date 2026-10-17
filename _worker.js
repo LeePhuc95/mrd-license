@@ -334,8 +334,10 @@ export default {
         return jsonResponse({ success: true, count, message: `Đã đồng bộ ${count} bản ghi D1.${gitStatus}` });
       }
       else if (action === "create_gift_key") {
-        const { start_date, expiration_date, note } = body;
+        let { start_date, expiration_date, note } = body;
         const gift_code = sanitizeCode(body.gift_code);
+        start_date = normalizeDateStr(start_date);
+        expiration_date = normalizeDateStr(expiration_date);
         if (!gift_code || !start_date || !expiration_date) {
           return jsonResponse({ success: false, error: "Thiếu thông tin GIFT_CODE hoặc ngày hiệu lực" }, 400);
         }
@@ -352,7 +354,7 @@ export default {
         await env.DB.prepare(`
           INSERT INTO gift_keys (gift_code, start_date, expiration_date, note, created_at)
           VALUES (?, ?, ?, ?, ?)
-        `).bind(gift_code, start_date.trim(), expiration_date.trim(), note || '', Date.now()).run();
+        `).bind(gift_code, start_date, expiration_date, note || '', Date.now()).run();
 
         const gitRes = await syncGiftCodeToGitHub(env);
         let msg = "Đã tạo Gift Code thành công!";
@@ -365,8 +367,10 @@ export default {
         return jsonResponse({ success: true, message: msg });
       }
       else if (action === "update_gift_key") {
-        const { id, start_date, expiration_date, note } = body;
+        let { id, start_date, expiration_date, note } = body;
         const gift_code = sanitizeCode(body.gift_code);
+        start_date = normalizeDateStr(start_date);
+        expiration_date = normalizeDateStr(expiration_date);
         if (!id || !gift_code || !start_date || !expiration_date) {
           return jsonResponse({ success: false, error: "Thiếu dữ liệu cập nhật Gift Code" }, 400);
         }
@@ -383,7 +387,7 @@ export default {
         await env.DB.prepare(`
           UPDATE gift_keys SET gift_code = ?, start_date = ?, expiration_date = ?, note = ?
           WHERE id = ?
-        `).bind(gift_code, start_date.trim(), expiration_date.trim(), note || '', id).run();
+        `).bind(gift_code, start_date, expiration_date, note || '', id).run();
 
         const gitRes = await syncGiftCodeToGitHub(env);
         let msg = "Đã cập nhật Gift Code thành công!";
@@ -572,12 +576,14 @@ export default {
         await ensureDbSchema(env);
         const stmts = [];
         for (const it of items) {
-          if (!it.id || !it.gift_code || !it.start_date || !it.expiration_date) continue;
+          const sDate = normalizeDateStr(it.start_date);
+          const eDate = normalizeDateStr(it.expiration_date);
+          if (!it.id || !it.gift_code || !sDate || !eDate) continue;
           const cleanGift = sanitizeCode(it.gift_code);
           stmts.push(
             env.DB.prepare(
               `UPDATE gift_keys SET gift_code = ?, start_date = ?, expiration_date = ?, note = ? WHERE id = ?`
-            ).bind(cleanGift, it.start_date.trim(), it.expiration_date.trim(), it.note || '', it.id)
+            ).bind(cleanGift, sDate, eDate, (it.note || '').trim(), Number(it.id))
           );
         }
         if (stmts.length > 0) {
@@ -1088,6 +1094,38 @@ function sanitizeCode(str) {
     .replace(/[Đ]/g, "D")
     .replace(/[^a-zA-Z0-9_\-]/g, "")
     .toUpperCase();
+}
+
+/**
+ * Chuẩn hóa chuỗi ngày tháng về dạng chuẩn YYYY-MM-DD:
+ * - Loại bỏ các ký tự vô hình (Zero-width space, BOM, LTR/RTL mark...)
+ * - Thay thế các loại dấu gạch ngang unicode (en-dash, em-dash, minus...), dấu gạch chéo (/), dấu chấm (.) thành dấu gạch ngang chuẩn (-)
+ * - Tự động nhận diện và chuyển đổi DD-MM-YYYY hoặc YYYY-M-D thành YYYY-MM-DD
+ */
+function normalizeDateStr(val) {
+  if (!val) return "";
+  let s = String(val).trim();
+  s = s.replace(/[\u200B-\u200F\u202A-\u202E\u2060\uFEFF]/g, "");
+  s = s.replace(/[\u2010-\u2015\u2212\uFF0D\/.]/g, "-");
+  s = s.replace(/\s*-\s*/g, "-").trim();
+
+  const dmy = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (dmy) {
+    const day = dmy[1].padStart(2, "0");
+    const month = dmy[2].padStart(2, "0");
+    const year = dmy[3];
+    return `${year}-${month}-${day}`;
+  }
+
+  const ymd = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (ymd) {
+    const year = ymd[1];
+    const month = ymd[2].padStart(2, "0");
+    const day = ymd[3].padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  return s;
 }
 
 /**
@@ -2244,7 +2282,7 @@ function renderAdminHTML() {
 
   <!-- MODAL UPLOAD EXCEL (DÙNG CHUNG CHO KÍCH HOẠT VÀ SẢN PHẨM) -->
   <div class="modal-backdrop" id="uploadExcelModal">
-    <div class="modal-box" style="max-width: 700px;">
+    <div class="modal-box" style="max-width: 850px;">
       <div class="modal-header">
         <h3 id="uploadModalTitle">📥 Tải lên tệp Excel</h3>
         <span class="close-btn" onclick="closeUploadModal()">&times;</span>
@@ -2267,7 +2305,7 @@ function renderAdminHTML() {
       </div>
 
       <div class="preview-table-container">
-        <table id="uploadPreviewTable">
+        <table id="uploadPreviewTable" style="min-width: 780px;">
           <thead></thead>
           <tbody>
             <tr><td style="text-align: center; color: var(--text-muted); padding: 16px;">Chưa chọn tệp tin nào.</td></tr>
@@ -2326,7 +2364,7 @@ function renderAdminHTML() {
 
       <div class="modal-actions" style="margin-top: 20px; display: flex; justify-content: flex-end; gap: 10px;">
         <button class="btn btn-gray" onclick="closeCreateLicenseModal()">Hủy</button>
-        <button class="btn btn-green" id="btnSaveNewLicense" onclick="handleCreateLicense()">+ Thêm Kích hoạt</button>
+        <button class="btn btn-green" id="btnSaveNewLicense" onclick="handleCreateLicense()">Lưu</button>
       </div>
     </div>
   </div>
@@ -2350,7 +2388,7 @@ function renderAdminHTML() {
       <div class="form-group">
         <label>NGÀY TẠO (YYYY-MM-DD) (*)</label>
         <div class="date-input-wrap">
-          <input type="text" id="giftStartDate" placeholder="YYYY-MM-DD" pattern="\d{4}-\d{2}-\d{2}" maxlength="10" oninput="syncInputToDatePicker('giftStartDate', 'giftStartDatePicker')">
+          <input type="text" id="giftStartDate" placeholder="YYYY-MM-DD" maxlength="15" oninput="syncInputToDatePicker('giftStartDate', 'giftStartDatePicker')" onblur="this.value = normalizeDateStr(this.value)">
           <button type="button" class="date-picker-btn" onclick="openNativeDatePicker('giftStartDatePicker')" title="Chọn ngày từ lịch">📅</button>
           <input type="date" id="giftStartDatePicker" class="native-date-hidden" onchange="syncDatePickerToInput('giftStartDatePicker', 'giftStartDate')">
         </div>
@@ -2358,7 +2396,7 @@ function renderAdminHTML() {
       <div class="form-group">
         <label>NGÀY HẾT HẠN (YYYY-MM-DD) (*)</label>
         <div class="date-input-wrap">
-          <input type="text" id="giftExpDate" placeholder="YYYY-MM-DD" pattern="\d{4}-\d{2}-\d{2}" maxlength="10" oninput="syncInputToDatePicker('giftExpDate', 'giftExpDatePicker')">
+          <input type="text" id="giftExpDate" placeholder="YYYY-MM-DD" maxlength="15" oninput="syncInputToDatePicker('giftExpDate', 'giftExpDatePicker')" onblur="this.value = normalizeDateStr(this.value)">
           <button type="button" class="date-picker-btn" onclick="openNativeDatePicker('giftExpDatePicker')" title="Chọn ngày từ lịch">📅</button>
           <input type="date" id="giftExpDatePicker" class="native-date-hidden" onchange="syncDatePickerToInput('giftExpDatePicker', 'giftExpDate')">
         </div>
@@ -2469,6 +2507,33 @@ function renderAdminHTML() {
           el.setSelectionRange(newPos, newPos);
         }
       }
+    }
+
+    // Chuẩn hóa định dạng ngày tháng (YYYY-MM-DD), loại bỏ ký tự tàng hình, đổi unicode dash/slash/dot
+    function normalizeDateStr(val) {
+      if (!val) return "";
+      let s = String(val).trim();
+      s = s.replace(/[\u200B-\u200F\u202A-\u202E\u2060\uFEFF]/g, "");
+      s = s.replace(/[\u2010-\u2015\u2212\uFF0D\/.]/g, "-");
+      s = s.replace(/\s*-\s*/g, "-").trim();
+
+      const dmy = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+      if (dmy) {
+        const day = dmy[1].padStart(2, "0");
+        const month = dmy[2].padStart(2, "0");
+        const year = dmy[3];
+        return year + "-" + month + "-" + day;
+      }
+
+      const ymd = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+      if (ymd) {
+        const year = ymd[1];
+        const month = ymd[2].padStart(2, "0");
+        const day = ymd[3].padStart(2, "0");
+        return year + "-" + month + "-" + day;
+      }
+
+      return s;
     }
 
     // Phân trang & Tìm kiếm & Bulk Selection & Excel State
@@ -3409,8 +3474,8 @@ function renderAdminHTML() {
         return '<tr data-id="' + item.id + '">' +
           '<td style="text-align: center; font-weight: bold;">' + stt + '</td>' +
           '<td><input type="text" class="bulk-cell-input bulk-gift-code" value="' + (item.gift_code || "") + '" style="font-family: monospace; font-weight: bold; text-transform: uppercase;" oninput="sanitizeCodeInput(this)"></td>' +
-          '<td><input type="text" class="bulk-cell-input bulk-gift-start" value="' + (item.start_date || "") + '" placeholder="YYYY-MM-DD" maxlength="10" style="text-align: center; font-family: monospace;"></td>' +
-          '<td><input type="text" class="bulk-cell-input bulk-gift-exp" value="' + (item.expiration_date || "") + '" placeholder="YYYY-MM-DD" maxlength="10" style="text-align: center; font-family: monospace;"></td>' +
+          '<td><input type="text" class="bulk-cell-input bulk-gift-start" value="' + (normalizeDateStr(item.start_date) || "") + '" placeholder="YYYY-MM-DD" maxlength="15" style="text-align: center; font-family: monospace;" onblur="this.value = normalizeDateStr(this.value)"></td>' +
+          '<td><input type="text" class="bulk-cell-input bulk-gift-exp" value="' + (normalizeDateStr(item.expiration_date) || "") + '" placeholder="YYYY-MM-DD" maxlength="15" style="text-align: center; font-family: monospace;" onblur="this.value = normalizeDateStr(this.value)"></td>' +
           '<td class="col-note"><input type="text" class="bulk-cell-input bulk-gift-note" value="' + (item.note || "") + '"></td>' +
         '</tr>';
       }).join("");
@@ -3427,15 +3492,21 @@ function renderAdminHTML() {
       const rows = tbody.querySelectorAll("tr");
       const itemsToUpdate = [];
 
-      for (const row of rows) {
+      for (let idx = 0; idx < rows.length; idx++) {
+        const row = rows[idx];
+        const stt = idx + 1;
         const id = Number(row.getAttribute("data-id"));
         const gift_code = sanitizeCode(row.querySelector(".bulk-gift-code").value);
-        const start_date = row.querySelector(".bulk-gift-start").value.trim();
-        const expiration_date = row.querySelector(".bulk-gift-exp").value.trim();
+        const start_date = normalizeDateStr(row.querySelector(".bulk-gift-start").value);
+        const expiration_date = normalizeDateStr(row.querySelector(".bulk-gift-exp").value);
         const note = row.querySelector(".bulk-gift-note").value.trim();
 
-        if (!gift_code) return showToast("GIFT_CODE không được để trống!", "warn");
-        if (!start_date || !expiration_date) return showToast("Vui lòng chọn đủ ngày bắt đầu và kết thúc!", "warn");
+        // Ghi lại ngày chuẩn hóa vào ô input để người dùng thấy rõ
+        row.querySelector(".bulk-gift-start").value = start_date;
+        row.querySelector(".bulk-gift-exp").value = expiration_date;
+
+        if (!gift_code) return showToast("Mục " + stt + ": GIFT CODE không được để trống!", "warn");
+        if (!start_date || !expiration_date) return showToast("Mục " + stt + ": Vui lòng chọn đủ ngày bắt đầu và kết thúc!", "warn");
         const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
         if (!dateRegex.test(start_date) || !dateRegex.test(expiration_date)) {
           return showToast("Mục " + stt + ": Định dạng ngày phải là YYYY-MM-DD (Ví dụ: 2026-10-16)!", "warn");
@@ -3486,7 +3557,7 @@ function renderAdminHTML() {
 
       if (type === "license") {
         titleEl.innerText = "📥 Upload Excel Danh sách Kích hoạt";
-        descEl.innerText = "Tải lên tệp Excel chứa danh sách bản quyền. Cần các cột từ SERIAL đến GỬI MAIL (SERIAL, SẢN PHẨM, TRẠNG THÁI KEY, EMAIL/SĐT, QUỐC GIA, GỬI MAIL).";
+        descEl.innerText = "Tải lên tệp Excel chứa danh sách bản quyền. Hỗ trợ các cột: SERIAL (*), SẢN PHẨM (*), TRẠNG THÁI KEY, EMAIL/SĐT, QUỐC GIA, GỬI MAIL, GHI CHÚ.";
       } else {
         titleEl.innerText = "📥 Upload Excel Danh mục Sản phẩm";
         descEl.innerText = "Tải lên tệp Excel chứa danh mục sản phẩm. Chỉ cần 1 cột duy nhất: TÊN SẢN PHẨM.";
@@ -3566,7 +3637,7 @@ function renderAdminHTML() {
             else if (normKey.indexOf("email") !== -1 || normKey.indexOf("sdt") !== -1 || normKey.indexOf("phone") !== -1) email = val;
             else if (normKey.indexOf("quocgia") !== -1 || normKey === "country") country = val || "VN";
             else if (normKey.indexOf("guimail") !== -1 || normKey.indexOf("mailnotify") !== -1) gmail = val || "NONE";
-            else if (normKey.indexOf("ghichu") !== -1 || normKey === "note") note = val;
+            else if (normKey.indexOf("ghichu") !== -1 || normKey.indexOf("note") !== -1) note = val;
           }
 
           if (serial && rom) {
@@ -3596,16 +3667,17 @@ function renderAdminHTML() {
         confirmBtn.disabled = false;
 
         const previewRows = validItems.slice(0, 5);
-        previewTable.querySelector("thead").innerHTML = '<tr><th>STT</th><th>SERIAL</th><th>SẢN PHẨM</th><th>TRẠNG THÁI</th><th>EMAIL/SĐT</th><th>QUỐC GIA</th><th>GỬI MAIL</th></tr>';
+        previewTable.querySelector("thead").innerHTML = '<tr><th style="width: 40px; text-align: center;">STT</th><th>SERIAL</th><th>SẢN PHẨM</th><th>TRẠNG THÁI</th><th>EMAIL/SĐT</th><th>QUỐC GIA</th><th>GỬI MAIL</th><th class="col-note">GHI CHÚ</th></tr>';
         previewTable.querySelector("tbody").innerHTML = previewRows.map(function(it, idx) {
           return '<tr>' +
-            '<td>' + (idx + 1) + '</td>' +
+            '<td style="text-align: center; font-weight: 600;">' + (idx + 1) + '</td>' +
             '<td><code>' + it.serial + '</code></td>' +
             '<td>' + it.rom_version + '</td>' +
-            '<td>' + it.key_status + '</td>' +
+            '<td><span class="badge badge-' + it.key_status + '">' + it.key_status + '</span></td>' +
             '<td>' + (it.email_phone || '-') + '</td>' +
             '<td>' + it.country + '</td>' +
-            '<td>' + it.gmail_notify + '</td>' +
+            '<td><span class="badge badge-' + it.gmail_notify + '">' + it.gmail_notify + '</span></td>' +
+            '<td class="col-note" title="' + (it.note || '').replace(/"/g, '&quot;') + '">' + (it.note || '-') + '</td>' +
           '</tr>';
         }).join("");
       } else {
@@ -3732,8 +3804,12 @@ function renderAdminHTML() {
       if (!picker) return;
       const inputId = pickerId === 'giftStartDatePicker' ? 'giftStartDate' : 'giftExpDate';
       const textInput = document.getElementById(inputId);
-      if (textInput && /^\d{4}-\d{2}-\d{2}$/.test(textInput.value.trim())) {
-        picker.value = textInput.value.trim();
+      if (textInput) {
+        const norm = normalizeDateStr(textInput.value);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(norm)) {
+          picker.value = norm;
+          textInput.value = norm;
+        }
       }
       if (typeof picker.showPicker === 'function') {
         try {
@@ -3745,10 +3821,12 @@ function renderAdminHTML() {
     }
 
     function syncInputToDatePicker(inputId, pickerId) {
-      const val = (document.getElementById(inputId).value || "").trim();
-      if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
+      const textInput = document.getElementById(inputId);
+      if (!textInput) return;
+      const norm = normalizeDateStr(textInput.value);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(norm)) {
         const picker = document.getElementById(pickerId);
-        if (picker) picker.value = val;
+        if (picker) picker.value = norm;
       }
     }
 
@@ -3756,7 +3834,7 @@ function renderAdminHTML() {
       const picker = document.getElementById(pickerId);
       const input = document.getElementById(inputId);
       if (picker && input && picker.value) {
-        input.value = picker.value;
+        input.value = normalizeDateStr(picker.value);
       }
     }
 
@@ -3918,12 +3996,14 @@ function renderAdminHTML() {
       document.getElementById("giftId").value = item.id;
       document.getElementById("giftModalTitle").innerText = "Chỉnh Sửa Gift Code";
       document.getElementById("giftCodeInput").value = item.gift_code;
-      document.getElementById("giftStartDate").value = item.start_date || "";
+      const sDate = normalizeDateStr(item.start_date);
+      const eDate = normalizeDateStr(item.expiration_date);
+      document.getElementById("giftStartDate").value = sDate;
       const startPicker = document.getElementById("giftStartDatePicker");
-      if (startPicker) startPicker.value = item.start_date || "";
-      document.getElementById("giftExpDate").value = item.expiration_date || "";
+      if (startPicker) startPicker.value = sDate;
+      document.getElementById("giftExpDate").value = eDate;
       const expPicker = document.getElementById("giftExpDatePicker");
-      if (expPicker) expPicker.value = item.expiration_date || "";
+      if (expPicker) expPicker.value = eDate;
       document.getElementById("giftNote").value = item.note || "";
       document.getElementById("giftModal").style.display = "flex";
     }
@@ -3943,9 +4023,27 @@ function renderAdminHTML() {
     async function handleSaveGiftKey() {
       const id = document.getElementById("giftId").value;
       const gift_code = sanitizeCode(document.getElementById("giftCodeInput").value);
-      const start_date = document.getElementById("giftStartDate").value.trim();
-      const expiration_date = document.getElementById("giftExpDate").value.trim();
+
+      const rawStart = document.getElementById("giftStartDate").value;
+      const rawExp = document.getElementById("giftExpDate").value;
+      const pickerStart = document.getElementById("giftStartDatePicker") ? document.getElementById("giftStartDatePicker").value : "";
+      const pickerExp = document.getElementById("giftExpDatePicker") ? document.getElementById("giftExpDatePicker").value : "";
+
+      let start_date = normalizeDateStr(rawStart) || normalizeDateStr(pickerStart);
+      let expiration_date = normalizeDateStr(rawExp) || normalizeDateStr(pickerExp);
       const note = document.getElementById("giftNote").value.trim();
+
+      // Cập nhật lại UI ô nhập và picker để hiển thị định dạng chuẩn YYYY-MM-DD
+      if (start_date) {
+        document.getElementById("giftStartDate").value = start_date;
+        const sp = document.getElementById("giftStartDatePicker");
+        if (sp) sp.value = start_date;
+      }
+      if (expiration_date) {
+        document.getElementById("giftExpDate").value = expiration_date;
+        const ep = document.getElementById("giftExpDatePicker");
+        if (ep) ep.value = expiration_date;
+      }
 
       if (!gift_code) return showToast("Vui lòng nhập GIFT CODE!", "warn");
       if (!start_date || !expiration_date) return showToast("Vui lòng chọn ngày bắt đầu và kết thúc!", "warn");
