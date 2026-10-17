@@ -2526,11 +2526,11 @@ function renderAdminHTML() {
     function normalizeDateStr(val) {
       if (!val) return "";
       let s = String(val).trim();
-      s = s.replace(/[\u200B-\u200F\u202A-\u202E\u2060\uFEFF]/g, "");
-      s = s.replace(/[\u2010-\u2015\u2212\uFF0D\/.]/g, "-");
-      s = s.replace(/\s*-\s*/g, "-").trim();
+      s = s.replace(/[\\u200B-\\u200F\\u202A-\\u202E\\u2060\\uFEFF]/g, "");
+      s = s.replace(/[\\u2010-\\u2015\\u2212\\uFF0D\/.]/g, "-");
+      s = s.replace(/[ \t]*-+[ \t]*/g, "-").trim();
 
-      const dmy = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+      const dmy = s.match(/^([0-9]{1,2})-([0-9]{1,2})-([0-9]{4})$/);
       if (dmy) {
         const day = dmy[1].padStart(2, "0");
         const month = dmy[2].padStart(2, "0");
@@ -2538,7 +2538,7 @@ function renderAdminHTML() {
         return year + "-" + month + "-" + day;
       }
 
-      const ymd = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+      const ymd = s.match(/^([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})$/);
       if (ymd) {
         const year = ymd[1];
         const month = ymd[2].padStart(2, "0");
@@ -3520,7 +3520,7 @@ function renderAdminHTML() {
 
         if (!gift_code) return showToast("Mục " + stt + ": GIFT CODE không được để trống!", "warn");
         if (!start_date || !expiration_date) return showToast("Mục " + stt + ": Vui lòng chọn đủ ngày bắt đầu và kết thúc!", "warn");
-        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+        const dateRegex = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
         if (!dateRegex.test(start_date) || !dateRegex.test(expiration_date)) {
           return showToast("Mục " + stt + ": Định dạng ngày phải là YYYY-MM-DD (Ví dụ: 2026-10-16)!", "warn");
         }
@@ -3863,7 +3863,7 @@ function renderAdminHTML() {
       const textInput = document.getElementById(inputId);
       if (textInput) {
         const norm = normalizeDateStr(textInput.value);
-        if (/^\d{4}-\d{2}-\d{2}$/.test(norm)) {
+        if (/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(norm)) {
           picker.value = norm;
           textInput.value = norm;
         }
@@ -3881,7 +3881,7 @@ function renderAdminHTML() {
       const textInput = document.getElementById(inputId);
       if (!textInput) return;
       const norm = normalizeDateStr(textInput.value);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(norm)) {
+      if (/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(norm)) {
         const picker = document.getElementById(pickerId);
         if (picker) picker.value = norm;
       }
@@ -4104,7 +4104,7 @@ function renderAdminHTML() {
 
       if (!gift_code) return showToast("Vui lòng nhập GIFT CODE!", "warn");
       if (!start_date || !expiration_date) return showToast("Vui lòng chọn ngày bắt đầu và kết thúc!", "warn");
-      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      const dateRegex = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
       if (!dateRegex.test(start_date) || !dateRegex.test(expiration_date)) {
         return showToast("Định dạng ngày phải là YYYY-MM-DD (Ví dụ: 2026-10-16)!", "warn");
       }
