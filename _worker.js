@@ -126,7 +126,7 @@ export default {
       const mutatingActions = new Set([
         "create_license", "update_license", "delete_license",
         "create_gift_key", "update_gift_key", "delete_gift_key",
-        "add_rom", "delete_rom",
+        "add_rom", "delete_rom", "bulk_delete_roms",
         "bulk_delete_licenses", "bulk_update_licenses", "bulk_import_licenses",
         "bulk_delete_gift_keys", "bulk_update_gift_keys",
         "bulk_import_roms",
@@ -348,11 +348,7 @@ export default {
           prefixMap.get(p).push(xorEncryptHex(raw, xorKey));
         }
 
-        if (updateStmts.length > 0) {
-          for (let i = 0; i < updateStmts.length; i += 100) {
-            await env.DB.batch(updateStmts.slice(i, i + 100));
-          }
-        }
+        await executeDbBatch(env.DB, updateStmts);
 
         const filesToCommit = [];
         for (const [p, encList] of prefixMap.entries()) {
@@ -493,6 +489,17 @@ export default {
       }
       else if (action === "delete_rom") {
         await env.DB.prepare("DELETE FROM rom_categories WHERE name = ?").bind(body.name).run();
+        return jsonResponse({ success: true, message: `Đã xóa Sản phẩm "${body.name}" thành công!` });
+      }
+      else if (action === "bulk_delete_roms") {
+        const { names } = body;
+        if (!Array.isArray(names) || names.length === 0) {
+          return jsonResponse({ success: false, error: "Danh sách sản phẩm không hợp lệ" }, 400);
+        }
+        await ensureDbSchema(env);
+        const placeholders = names.map(() => "?").join(",");
+        await env.DB.prepare(`DELETE FROM rom_categories WHERE name IN (${placeholders})`).bind(...names).run();
+        return jsonResponse({ success: true, count: names.length, message: `Đã xóa thành công ${names.length} Sản phẩm!` });
       }
       else if (action === "bulk_delete_licenses") {
         const { ids } = body;
@@ -561,11 +568,7 @@ export default {
           );
         }
 
-        if (stmts.length > 0) {
-          for (let i = 0; i < stmts.length; i += 100) {
-            await env.DB.batch(stmts.slice(i, i + 100));
-          }
-        }
+        await executeDbBatch(env.DB, stmts);
 
         const updatePrefixesList = Array.from(affectedPrefixes).sort();
         const gitRes = await syncShardsBlockToGitHub(env, updatePrefixesList, `Cập nhật ${stmts.length} thiết bị (${updatePrefixesList.length} shards)`);
@@ -633,11 +636,7 @@ export default {
           );
         }
 
-        if (stmts.length > 0) {
-          for (let i = 0; i < stmts.length; i += 100) {
-            await env.DB.batch(stmts.slice(i, i + 100));
-          }
-        }
+        await executeDbBatch(env.DB, stmts);
 
         // Nếu có mục mới, đồng bộ các prefix mới. Nếu toàn bộ bị trùng (ví dụ upload lại để fix file json), đồng bộ tất cả prefix có trong file!
         const prefixesToSync = (affectedPrefixes.size > 0 ? Array.from(affectedPrefixes) : Array.from(allUploadedPrefixes)).sort();
@@ -697,11 +696,7 @@ export default {
             ).bind(cleanGift, sDate, eDate, (it.note || '').trim(), Number(it.id))
           );
         }
-        if (stmts.length > 0) {
-          for (let i = 0; i < stmts.length; i += 100) {
-            await env.DB.batch(stmts.slice(i, i + 100));
-          }
-        }
+        await executeDbBatch(env.DB, stmts);
         const gitRes = await syncGiftCodeToGitHub(env);
         if (!gitRes.success) {
           return jsonResponse({
@@ -723,11 +718,7 @@ export default {
         for (const name of uniqueNames) {
           stmts.push(env.DB.prepare("INSERT OR IGNORE INTO rom_categories (name) VALUES (?)").bind(name));
         }
-        if (stmts.length > 0) {
-          for (let i = 0; i < stmts.length; i += 100) {
-            await env.DB.batch(stmts.slice(i, i + 100));
-          }
-        }
+        await executeDbBatch(env.DB, stmts);
         return jsonResponse({ success: true, count: stmts.length, message: `Đã thêm thành công ${stmts.length} sản phẩm!` });
       }
       else if (action === "update_setting_auto_email") {
@@ -937,6 +928,13 @@ async function bumpDbVersion(env) {
     `).bind(now, now).run();
   } catch (e) {
     console.error("Lỗi bumpDbVersion:", e);
+  }
+}
+
+async function executeDbBatch(db, stmts, chunkSize = 100) {
+  if (!db || !stmts || stmts.length === 0) return;
+  for (let i = 0; i < stmts.length; i += chunkSize) {
+    await db.batch(stmts.slice(i, i + chunkSize));
   }
 }
 
@@ -2199,6 +2197,7 @@ function renderAdminHTML() {
         <div class="bulk-toolbar" id="licenseBulkToolbar">
           <div class="bulk-toolbar-info">
             <span id="licenseBulkCountText">Đã chọn 0 mục</span>
+            <button type="button" class="btn btn-blue" id="btnSelectAllLicenses" style="padding: 3px 8px; font-size: 11px;" onclick="selectAllFilteredLicenses()" title="Chọn tất cả các mục trên tất cả các trang">Chọn tất cả</button>
             <button type="button" class="btn btn-gray" style="padding: 3px 8px; font-size: 11px;" onclick="clearLicenseSelection()">Bỏ chọn</button>
           </div>
           <div class="bulk-toolbar-actions">
@@ -2257,9 +2256,31 @@ function renderAdminHTML() {
             <input type="text" id="romSearchInput" placeholder="Tìm kiếm Sản phẩm..." oninput="onRomSearchChange()">
           </div>
         </div>
+
+        <!-- BULK TOOLBAR: ROMS -->
+        <div class="bulk-toolbar" id="romBulkToolbar">
+          <div class="bulk-toolbar-info">
+            <span id="romBulkCountText">Đã chọn 0 mục</span>
+            <button type="button" class="btn btn-blue" id="btnSelectAllRoms" style="padding: 3px 8px; font-size: 11px;" onclick="selectAllFilteredRoms()" title="Chọn tất cả Sản phẩm trên tất cả các trang">Chọn tất cả</button>
+            <button type="button" class="btn btn-gray" style="padding: 3px 8px; font-size: 11px;" onclick="clearRomSelection()">Bỏ chọn</button>
+          </div>
+          <div class="bulk-toolbar-actions">
+            <button type="button" class="btn btn-red" id="btnBulkDeleteRom" style="padding: 6px 12px; font-size: 12px;" onclick="handleBulkDeleteRoms()">🗑️ Xóa đã chọn</button>
+          </div>
+        </div>
+
         <div class="table-container">
           <table>
-            <thead><tr><th>Tên Sản phẩm</th><th style="width: 80px; text-align: center;">Hành động</th></tr></thead>
+            <thead>
+              <tr>
+                <th class="col-cb" style="width: 40px; text-align: center;">
+                  <input type="checkbox" id="checkAllRoms" onchange="toggleSelectAllRoms(this.checked)">
+                </th>
+                <th class="col-stt" style="width: 50px; text-align: center;">STT</th>
+                <th>Tên Sản phẩm</th>
+                <th style="width: 80px; text-align: center;">Hành động</th>
+              </tr>
+            </thead>
             <tbody id="romTableBody"></tbody>
           </table>
         </div>
@@ -2302,6 +2323,7 @@ function renderAdminHTML() {
         <div class="bulk-toolbar" id="giftBulkToolbar">
           <div class="bulk-toolbar-info">
             <span id="giftBulkCountText">Đã chọn 0 mục</span>
+            <button type="button" class="btn btn-blue" id="btnSelectAllGifts" style="padding: 3px 8px; font-size: 11px;" onclick="selectAllFilteredGifts()" title="Chọn tất cả Gift Code trên tất cả các trang">Chọn tất cả</button>
             <button type="button" class="btn btn-gray" style="padding: 3px 8px; font-size: 11px;" onclick="clearGiftSelection()">Bỏ chọn</button>
           </div>
           <div class="bulk-toolbar-actions">
@@ -2718,6 +2740,7 @@ function renderAdminHTML() {
 
     let selectedLicenseIds = new Set();
     let selectedGiftIds = new Set();
+    let selectedRomNames = new Set();
 
     let currentUploadType = "license";
     let parsedImportData = [];
@@ -3152,66 +3175,54 @@ function renderAdminHTML() {
       renderRomTable();
     }
 
-    function updateLicenseBulkToolbar() {
-      const toolbar = document.getElementById("licenseBulkToolbar");
-      const countText = document.getElementById("licenseBulkCountText");
+    // =========================================================================
+    // CÁC HÀM TIỆN ÍCH DÙNG CHUNG (PAGINATION, SELECTION, BULK TOOLBAR)
+    // =========================================================================
+    function getPaginationData(items, page, pageSize = PAGE_SIZE) {
+      const totalCount = items ? items.length : 0;
+      const totalPages = Math.ceil(totalCount / pageSize) || 1;
+      const curPage = Math.min(Math.max(1, page), totalPages);
+      const start = (curPage - 1) * pageSize;
+      const pageItems = items ? items.slice(start, start + pageSize) : [];
+      return { totalCount, totalPages, curPage, start, pageItems };
+    }
+
+    function updateGenericBulkToolbar(toolbarId, countTextId, btnAllId, selectedSet, totalFiltered, entityName = "mục") {
+      const toolbar = document.getElementById(toolbarId);
+      const countText = document.getElementById(countTextId);
+      const btnAll = document.getElementById(btnAllId);
       if (!toolbar) return;
-      const count = selectedLicenseIds.size;
+      const count = selectedSet.size;
       if (count > 0) {
         toolbar.classList.add("show");
-        if (countText) countText.innerText = "Đã chọn " + count + " mục";
+        if (countText) countText.innerText = "Đã chọn " + count + " " + entityName;
+        if (btnAll) {
+          if (count >= totalFiltered && totalFiltered > 0) {
+            btnAll.innerText = "Đã chọn tất cả (" + totalFiltered + ")";
+            btnAll.disabled = true;
+            btnAll.style.opacity = "0.7";
+          } else {
+            btnAll.innerText = "Chọn tất cả (" + totalFiltered + ")";
+            btnAll.disabled = false;
+            btnAll.style.opacity = "1";
+          }
+        }
       } else {
         toolbar.classList.remove("show");
       }
     }
 
-    function toggleLicenseItem(id, isChecked) {
-      if (isChecked) {
-        selectedLicenseIds.add(id);
-      } else {
-        selectedLicenseIds.delete(id);
-      }
-      updateLicenseBulkToolbar();
-      updateCheckAllLicensesState();
-    }
-
-    function toggleSelectAllLicenses(isChecked) {
-      const filtered = getFilteredLicenses();
-      const totalPages = Math.ceil(filtered.length / PAGE_SIZE) || 1;
-      const curPage = Math.min(Math.max(1, licensePage), totalPages);
-      const start = (curPage - 1) * PAGE_SIZE;
-      const pageItems = filtered.slice(start, start + PAGE_SIZE);
-
-      pageItems.forEach(function(item) {
-        if (isChecked) {
-          selectedLicenseIds.add(item.id);
-        } else {
-          selectedLicenseIds.delete(item.id);
-        }
-      });
-      renderLicenseTable();
-    }
-
-    function clearLicenseSelection() {
-      selectedLicenseIds.clear();
-      renderLicenseTable();
-    }
-
-    function updateCheckAllLicensesState() {
-      const checkAll = document.getElementById("checkAllLicenses");
+    function updateGenericCheckAllState(checkAllId, filteredItems, page, selectedSet, getIdFn) {
+      const checkAll = document.getElementById(checkAllId);
       if (!checkAll) return;
-      const filtered = getFilteredLicenses();
-      const totalPages = Math.ceil(filtered.length / PAGE_SIZE) || 1;
-      const curPage = Math.min(Math.max(1, licensePage), totalPages);
-      const start = (curPage - 1) * PAGE_SIZE;
-      const pageItems = filtered.slice(start, start + PAGE_SIZE);
-
+      const { pageItems } = getPaginationData(filteredItems, page);
       if (pageItems.length === 0) {
         checkAll.checked = false;
         checkAll.indeterminate = false;
         return;
       }
-      const pageSelectedCount = pageItems.filter(function(it) { return selectedLicenseIds.has(it.id); }).length;
+      const getId = getIdFn || (it => it.id);
+      const pageSelectedCount = pageItems.filter(it => selectedSet.has(getId(it))).length;
       if (pageSelectedCount === pageItems.length) {
         checkAll.checked = true;
         checkAll.indeterminate = false;
@@ -3224,19 +3235,63 @@ function renderAdminHTML() {
       }
     }
 
+    function toggleGenericItem(id, isChecked, selectedSet, updateToolbarFn, updateCheckAllFn) {
+      if (isChecked) selectedSet.add(id);
+      else selectedSet.delete(id);
+      updateToolbarFn();
+      updateCheckAllFn();
+    }
+
+    function toggleGenericPageSelection(filteredItems, page, selectedSet, isChecked, renderFn, getIdFn) {
+      const { pageItems } = getPaginationData(filteredItems, page);
+      const getId = getIdFn || (it => it.id);
+      pageItems.forEach(it => {
+        const id = getId(it);
+        if (isChecked) selectedSet.add(id);
+        else selectedSet.delete(id);
+      });
+      renderFn();
+    }
+
+    function selectAllGenericFiltered(filteredItems, selectedSet, entityName, renderFn, getIdFn) {
+      const getId = getIdFn || (it => it.id);
+      filteredItems.forEach(it => selectedSet.add(getId(it)));
+      renderFn();
+      showToast("Đã chọn tất cả " + filteredItems.length + " " + entityName + " trong tất cả các trang!", "info", 3000);
+    }
+
+    function clearGenericSelection(selectedSet, renderFn) {
+      selectedSet.clear();
+      renderFn();
+    }
+
+    // --- KÍCH HOẠT (LICENSES) BULK FUNCTIONS ---
+    function updateLicenseBulkToolbar() {
+      updateGenericBulkToolbar("licenseBulkToolbar", "licenseBulkCountText", "btnSelectAllLicenses", selectedLicenseIds, getFilteredLicenses().length, "mục");
+    }
+    function toggleLicenseItem(id, isChecked) {
+      toggleGenericItem(id, isChecked, selectedLicenseIds, updateLicenseBulkToolbar, updateCheckAllLicensesState);
+    }
+    function toggleSelectAllLicenses(isChecked) {
+      toggleGenericPageSelection(getFilteredLicenses(), licensePage, selectedLicenseIds, isChecked, renderLicenseTable);
+    }
+    function selectAllFilteredLicenses() {
+      selectAllGenericFiltered(getFilteredLicenses(), selectedLicenseIds, "mục", renderLicenseTable);
+    }
+    function clearLicenseSelection() {
+      clearGenericSelection(selectedLicenseIds, renderLicenseTable);
+    }
+    function updateCheckAllLicensesState() {
+      updateGenericCheckAllState("checkAllLicenses", getFilteredLicenses(), licensePage, selectedLicenseIds);
+    }
+
     function renderLicenseTable() {
       const tbody = document.getElementById("licenseTableBody");
       if (!tbody) return;
 
       const filtered = getFilteredLicenses();
-      const totalCount = filtered.length;
-      const totalPages = Math.ceil(totalCount / PAGE_SIZE) || 1;
-
-      if (licensePage > totalPages) licensePage = totalPages;
-      if (licensePage < 1) licensePage = 1;
-
-      const start = (licensePage - 1) * PAGE_SIZE;
-      const pageItems = filtered.slice(start, start + PAGE_SIZE);
+      const { totalCount, totalPages, curPage, start, pageItems } = getPaginationData(filtered, licensePage);
+      licensePage = curPage;
 
       if (pageItems.length === 0) {
         tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: var(--text-muted); padding: 24px;">Không tìm thấy bản ghi nào.</td></tr>';
@@ -3314,99 +3369,97 @@ function renderAdminHTML() {
       if (!tbody) return;
 
       const filtered = getFilteredRoms();
-      const totalCount = filtered.length;
-      const totalPages = Math.ceil(totalCount / PAGE_SIZE) || 1;
-
-      if (romPage > totalPages) romPage = totalPages;
-      if (romPage < 1) romPage = 1;
-
-      const start = (romPage - 1) * PAGE_SIZE;
-      const pageItems = filtered.slice(start, start + PAGE_SIZE);
+      const { totalCount, totalPages, curPage, start, pageItems } = getPaginationData(filtered, romPage);
+      romPage = curPage;
 
       if (pageItems.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="2" style="color:var(--text-muted); text-align:center; padding: 20px;">Không tìm thấy Sản phẩm nào.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-muted); text-align:center; padding: 20px;">Không tìm thấy Sản phẩm nào.</td></tr>';
       } else {
-        tbody.innerHTML = pageItems.map(function(r) {
-          return '<tr>' +
+        tbody.innerHTML = pageItems.map(function(r, idx) {
+          const stt = start + idx + 1;
+          const isSelected = selectedRomNames.has(r);
+          return '<tr style="' + (isSelected ? 'background: var(--table-hover);' : '') + '">' +
+            '<td class="col-cb" style="text-align: center;" onclick="event.stopPropagation()">' +
+              '<input type="checkbox" ' + (isSelected ? 'checked' : '') + ' data-name="' + r + '" onchange="toggleRomItem(this.dataset.name, this.checked)">' +
+            '</td>' +
+            '<td class="col-stt" style="text-align: center;"><b>' + stt + '</b></td>' +
             '<td><b><code>' + r + '</code></b></td>' +
             '<td style="text-align: center;"><button type="button" class="btn btn-red" style="padding:4px 8px;font-size:11px;" data-name="' + r + '" onclick="handleDeleteRom(this.dataset.name, this)">Xóa</button></td>' +
           '</tr>';
         }).join('');
       }
 
+      updateRomBulkToolbar();
+      updateCheckAllRomsState();
       renderPaginationUI("romPagination", romPage, totalPages, totalCount, "gotoRomPage");
     }
 
-    function updateGiftBulkToolbar() {
-      const toolbar = document.getElementById("giftBulkToolbar");
-      const countText = document.getElementById("giftBulkCountText");
-      if (!toolbar) return;
-      const count = selectedGiftIds.size;
-      if (count > 0) {
-        toolbar.classList.add("show");
-        if (countText) countText.innerText = "Đã chọn " + count + " mục";
-      } else {
-        toolbar.classList.remove("show");
-      }
+    // --- SẢN PHẨM (ROMS) BULK FUNCTIONS ---
+    function updateRomBulkToolbar() {
+      updateGenericBulkToolbar("romBulkToolbar", "romBulkCountText", "btnSelectAllRoms", selectedRomNames, getFilteredRoms().length, "mục");
+    }
+    function toggleRomItem(name, isChecked) {
+      toggleGenericItem(name, isChecked, selectedRomNames, updateRomBulkToolbar, updateCheckAllRomsState);
+    }
+    function toggleSelectAllRoms(isChecked) {
+      toggleGenericPageSelection(getFilteredRoms(), romPage, selectedRomNames, isChecked, renderRomTable, r => r);
+    }
+    function selectAllFilteredRoms() {
+      selectAllGenericFiltered(getFilteredRoms(), selectedRomNames, "Sản phẩm", renderRomTable, r => r);
+    }
+    function clearRomSelection() {
+      clearGenericSelection(selectedRomNames, renderRomTable);
+    }
+    function updateCheckAllRomsState() {
+      updateGenericCheckAllState("checkAllRoms", getFilteredRoms(), romPage, selectedRomNames, r => r);
     }
 
-    function toggleGiftItem(id, isChecked) {
-      if (isChecked) {
-        selectedGiftIds.add(id);
-      } else {
-        selectedGiftIds.delete(id);
-      }
-      updateGiftBulkToolbar();
-      updateCheckAllGiftsState();
-    }
-
-    function toggleSelectAllGifts(isChecked) {
-      const filtered = getFilteredGifts();
-      const totalPages = Math.ceil(filtered.length / PAGE_SIZE) || 1;
-      const curPage = Math.min(Math.max(1, giftPage), totalPages);
-      const start = (curPage - 1) * PAGE_SIZE;
-      const pageItems = filtered.slice(start, start + PAGE_SIZE);
-
-      pageItems.forEach(function(item) {
-        if (isChecked) {
-          selectedGiftIds.add(item.id);
+    async function handleBulkDeleteRoms() {
+      if (selectedRomNames.size === 0) return;
+      const count = selectedRomNames.size;
+      const confirmed = await showConfirm(
+        "Xác nhận xóa hàng loạt Sản phẩm",
+        "Bạn có chắc chắn muốn xóa vĩnh viễn " + count + " Sản phẩm đã chọn?",
+        true
+      );
+      if (!confirmed) return;
+      const delBtn = document.getElementById("btnBulkDeleteRom");
+      setBtnLoading(delBtn, true, "Đang xóa...");
+      try {
+        const res = await sendAdminAction({
+          action: "bulk_delete_roms",
+          names: Array.from(selectedRomNames)
+        }, "Đang xóa " + count + " Sản phẩm...");
+        if (res && res.success !== false) {
+          selectedRomNames.clear();
+          await loadAllData();
+          showToast(res.message || ("Đã xóa " + count + " Sản phẩm thành công!"), "success", 6000);
         } else {
-          selectedGiftIds.delete(item.id);
+          showToast("Lỗi xóa: " + ((res && res.error) || "Không thể xóa"), "error", 10000);
         }
-      });
-      renderGiftTable();
+      } finally {
+        setBtnLoading(delBtn, false);
+      }
     }
 
+    // --- GIFT CODE BULK FUNCTIONS ---
+    function updateGiftBulkToolbar() {
+      updateGenericBulkToolbar("giftBulkToolbar", "giftBulkCountText", "btnSelectAllGifts", selectedGiftIds, getFilteredGifts().length, "mục");
+    }
+    function toggleGiftItem(id, isChecked) {
+      toggleGenericItem(id, isChecked, selectedGiftIds, updateGiftBulkToolbar, updateCheckAllGiftsState);
+    }
+    function toggleSelectAllGifts(isChecked) {
+      toggleGenericPageSelection(getFilteredGifts(), giftPage, selectedGiftIds, isChecked, renderGiftTable);
+    }
+    function selectAllFilteredGifts() {
+      selectAllGenericFiltered(getFilteredGifts(), selectedGiftIds, "Gift Code", renderGiftTable);
+    }
     function clearGiftSelection() {
-      selectedGiftIds.clear();
-      renderGiftTable();
+      clearGenericSelection(selectedGiftIds, renderGiftTable);
     }
-
     function updateCheckAllGiftsState() {
-      const checkAll = document.getElementById("checkAllGifts");
-      if (!checkAll) return;
-      const filtered = getFilteredGifts();
-      const totalPages = Math.ceil(filtered.length / PAGE_SIZE) || 1;
-      const curPage = Math.min(Math.max(1, giftPage), totalPages);
-      const start = (curPage - 1) * PAGE_SIZE;
-      const pageItems = filtered.slice(start, start + PAGE_SIZE);
-
-      if (pageItems.length === 0) {
-        checkAll.checked = false;
-        checkAll.indeterminate = false;
-        return;
-      }
-      const pageSelectedCount = pageItems.filter(function(it) { return selectedGiftIds.has(it.id); }).length;
-      if (pageSelectedCount === pageItems.length) {
-        checkAll.checked = true;
-        checkAll.indeterminate = false;
-      } else if (pageSelectedCount > 0) {
-        checkAll.checked = false;
-        checkAll.indeterminate = true;
-      } else {
-        checkAll.checked = false;
-        checkAll.indeterminate = false;
-      }
+      updateGenericCheckAllState("checkAllGifts", getFilteredGifts(), giftPage, selectedGiftIds);
     }
 
     function renderGiftTable() {
@@ -3420,14 +3473,8 @@ function renderAdminHTML() {
       }
 
       const filtered = getFilteredGifts();
-      const totalCount = filtered.length;
-      const totalPages = Math.ceil(totalCount / PAGE_SIZE) || 1;
-
-      if (giftPage > totalPages) giftPage = totalPages;
-      if (giftPage < 1) giftPage = 1;
-
-      const start = (giftPage - 1) * PAGE_SIZE;
-      const pageItems = filtered.slice(start, start + PAGE_SIZE);
+      const { totalCount, totalPages, curPage, start, pageItems } = getPaginationData(filtered, giftPage);
+      giftPage = curPage;
       const todayStr = new Date().toISOString().split("T")[0];
 
       if (pageItems.length === 0) {
@@ -4540,6 +4587,7 @@ function renderAdminHTML() {
         try {
           const res = await sendAdminAction({ action: "delete_rom", name }, "Đang xóa Sản phẩm...");
           if (res && res.success !== false) {
+            selectedRomNames.delete(name);
             await loadAllData();
             showToast('Đã xóa "' + name + '"', "success");
           } else {
