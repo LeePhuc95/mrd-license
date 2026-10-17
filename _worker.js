@@ -84,7 +84,7 @@ export default {
       await ensureDbSchema(env);
       const MAX_LICENSE_REQ = 10000; // Trần 10.000 req dành riêng cho License
 
-      // Truy vấn đồng thời dữ liệu bản quyền, ROM, request quota, Gift keys, phiên bản DB và cài đặt
+      // Truy vấn đồng thời dữ liệu bản quyền, sản phẩm, request quota, Gift keys, phiên bản DB và cài đặt
       const [licensesRes, romsRes, statsRes, giftKeysRes, versionRes, autoEmailRes] = await Promise.all([
         env.DB.prepare("SELECT * FROM licenses ORDER BY id DESC").all(),
         env.DB.prepare("SELECT * FROM rom_categories ORDER BY name ASC").all(),
@@ -1135,7 +1135,7 @@ function renderAdminHTML() {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>MRD Team - Quản Lý Kích hoạt Thiết bị</title>
+  <title>MRD Team - Quản Lý Bản Quyền</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <meta name="theme-color" content="#0f172a">
   <meta name="mobile-web-app-capable" content="yes">
@@ -1852,7 +1852,7 @@ function renderAdminHTML() {
       <span style="font-size: 14px; cursor: pointer; color: var(--text-muted); display: none;" id="closeSidebarBtn" onclick="toggleSidebar(false)">✕</span>
     </div>
     <ul class="nav-list">
-      <li class="nav-item active" onclick="switchTab('listTab', this)">📋 Danh sách Kích hoạt</li>
+      <li class="nav-item active" onclick="switchTab('listTab', this)">🔑 Kích hoạt</li>
       <li class="nav-item" onclick="switchTab('giftTab', this)">🎁 Gift Code</li>
       <li class="nav-item" onclick="switchTab('romTab', this)">📁 Sản phẩm</li>
       <li class="nav-item" onclick="switchTab('settingsTab', this)">⚙️ Cài đặt</li>
@@ -1960,7 +1960,7 @@ function renderAdminHTML() {
         <div class="filter-bar">
           <div class="search-input-wrap">
             <span class="search-icon">🔍</span>
-            <input type="text" id="licenseSearchInput" placeholder="Tìm kiếm Serial, Phiên bản, Email/SĐT, Ghi chú..." oninput="onLicenseSearchChange()">
+            <input type="text" id="licenseSearchInput" placeholder="Tìm kiếm Serial, Sản phẩm, Email/SĐT, Ghi chú..." oninput="onLicenseSearchChange()">
           </div>
           <select class="filter-select" id="licenseStatusFilter" onchange="onLicenseSearchChange()">
             <option value="">-- Tất cả trạng thái --</option>
@@ -1993,7 +1993,7 @@ function renderAdminHTML() {
                 </th>
                 <th class="col-stt">STT</th>
                 <th style="width: 140px;">SERIAL</th>
-                <th style="width: 130px;">PHIÊN BẢN</th>
+                <th style="width: 130px;">SẢN PHẨM</th>
                 <th style="width: 105px;">TRẠNG THÁI KEY</th>
                 <th style="width: 180px;">EMAIL/SĐT</th>
                 <th style="width: 80px;">QUỐC GIA</th>
@@ -2154,7 +2154,7 @@ function renderAdminHTML() {
               <tr>
                 <th style="width: 40px;">STT</th>
                 <th>SERIAL (*)</th>
-                <th>PHIÊN BẢN (*)</th>
+                <th>SẢN PHẨM (*)</th>
                 <th>TRẠNG THÁI KEY</th>
                 <th>EMAIL/SĐT</th>
                 <th>QUỐC GIA</th>
@@ -2250,7 +2250,7 @@ function renderAdminHTML() {
   <div class="modal-backdrop" id="createLicenseModal">
     <div class="modal-box" style="max-width: 520px;">
       <div class="modal-header">
-        <h3 id="createLicenseModalTitle">Thêm Kích hoạt Mới</h3>
+        <h3 id="createLicenseModalTitle">Thêm thiết bị mới</h3>
         <span class="close-btn" onclick="closeCreateLicenseModal()">&times;</span>
       </div>
       
@@ -2259,7 +2259,7 @@ function renderAdminHTML() {
         <input type="text" id="addSerial" placeholder="Ví dụ: G6AY8400E7W">
       </div>
       <div class="form-group">
-        <label>PHIÊN BẢN (*)</label>
+        <label>SẢN PHẨM (*)</label>
         <select id="addRomSelect"></select>
       </div>
       <div class="form-group">
@@ -2360,7 +2360,7 @@ function renderAdminHTML() {
         <input type="text" id="editSerial" disabled>
       </div>
       <div class="form-group">
-        <label>PHIÊN BẢN</label>
+        <label>SẢN PHẨM</label>
         <select id="editRomSelect" disabled></select>
       </div>
       <div class="form-group">
@@ -3258,7 +3258,7 @@ function renderAdminHTML() {
           return showToast("Serial không được để trống!", "warn");
         }
         if (!rom_version) {
-          return showToast("Vui lòng chọn Phiên bản cho tất cả các dòng!", "warn");
+          return showToast("Vui lòng chọn Sản phẩm cho tất cả các dòng!", "warn");
         }
 
         itemsToUpdate.push({
@@ -3418,7 +3418,7 @@ function renderAdminHTML() {
 
       if (type === "license") {
         titleEl.innerText = "📥 Upload Excel Danh sách Kích hoạt";
-        descEl.innerText = "Tải lên tệp Excel chứa danh sách bản quyền. Cần các cột từ SERIAL đến GỬI MAIL (SERIAL, PHIÊN BẢN, TRẠNG THÁI KEY, EMAIL/SĐT, QUỐC GIA, GỬI MAIL).";
+        descEl.innerText = "Tải lên tệp Excel chứa danh sách bản quyền. Cần các cột từ SERIAL đến GỬI MAIL (SERIAL, SẢN PHẨM, TRẠNG THÁI KEY, EMAIL/SĐT, QUỐC GIA, GỬI MAIL).";
       } else {
         titleEl.innerText = "📥 Upload Excel Danh mục Sản phẩm";
         descEl.innerText = "Tải lên tệp Excel chứa danh mục sản phẩm. Chỉ cần 1 cột duy nhất: TÊN SẢN PHẨM.";
@@ -3517,7 +3517,7 @@ function renderAdminHTML() {
         parsedImportData = validItems;
 
         if (validItems.length === 0) {
-          summaryEl.innerText = "❌ Không tìm thấy dòng nào có đủ cột SERIAL và PHIÊN BẢN!";
+          summaryEl.innerText = "❌ Không tìm thấy dòng nào có đủ cột SERIAL và SẢN PHẨM!";
           summaryEl.style.color = "#ef4444";
           confirmBtn.disabled = true;
           return;
@@ -3528,7 +3528,7 @@ function renderAdminHTML() {
         confirmBtn.disabled = false;
 
         const previewRows = validItems.slice(0, 5);
-        previewTable.querySelector("thead").innerHTML = '<tr><th>STT</th><th>SERIAL</th><th>PHIÊN BẢN</th><th>TRẠNG THÁI</th><th>EMAIL/SĐT</th><th>QUỐC GIA</th><th>GỬI MAIL</th></tr>';
+        previewTable.querySelector("thead").innerHTML = '<tr><th>STT</th><th>SERIAL</th><th>SẢN PHẨM</th><th>TRẠNG THÁI</th><th>EMAIL/SĐT</th><th>QUỐC GIA</th><th>GỬI MAIL</th></tr>';
         previewTable.querySelector("tbody").innerHTML = previewRows.map(function(it, idx) {
           return '<tr>' +
             '<td>' + (idx + 1) + '</td>' +
@@ -3591,7 +3591,7 @@ function renderAdminHTML() {
         const sampleData = [
           {
             "SERIAL": "G6AY8400E7W",
-            "PHIÊN BẢN": (systemData.rom_categories && systemData.rom_categories[0]) || "PRO_V1",
+            "SẢN PHẨM": (systemData.rom_categories && systemData.rom_categories[0]) || "PRO_V1",
             "TRẠNG THÁI KEY": "OK",
             "EMAIL/SĐT": "khachhang1@gmail.com",
             "QUỐC GIA": "VN",
@@ -3600,7 +3600,7 @@ function renderAdminHTML() {
           },
           {
             "SERIAL": "A9BX1200Z4K",
-            "PHIÊN BẢN": (systemData.rom_categories && systemData.rom_categories[0]) || "PRO_V1",
+            "SẢN PHẨM": (systemData.rom_categories && systemData.rom_categories[0]) || "PRO_V1",
             "TRẠNG THÁI KEY": "OK",
             "EMAIL/SĐT": "khachhang2@gmail.com",
             "QUỐC GIA": "Other",
@@ -4126,7 +4126,7 @@ function renderAdminHTML() {
 
     async function handleAddRom() {
       const name = document.getElementById("newRomName").value.trim();
-      if (!name) return showToast("Vui lòng nhập PHIÊN BẢN!", "warn");
+      if (!name) return showToast("Vui lòng nhập SẢN PHẨM!", "warn");
       const btn = document.getElementById("btnAddRom");
       setBtnLoading(btn, true, "Đang thêm...");
       try {
