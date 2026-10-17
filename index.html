@@ -3912,7 +3912,11 @@
 
     async function triggerAutoSendEmail(id, badgeEl) {
       try {
-        const res = await sendAdminAction({ action: "resend_mail", id: id, is_auto: true }, "Đang tự động gửi email...");
+        const itemInfo = (systemData.licenses || []).find(l => l.id === id);
+        const serialText = itemInfo ? itemInfo.serial : ("ID " + id);
+
+        // Chạy ngầm hoàn toàn (silent): không hiện popup overlay làm gián đoạn người dùng
+        const res = await sendAdminAction({ action: "resend_mail", id: id, is_auto: true }, false);
         if (res && res.success) {
           const finalStatus = (res.gmail_notify && res.gmail_notify !== "SENDING") ? (res.gmail_notify === "SENT" ? "OK" : res.gmail_notify) : "OK";
           const found = (systemData.licenses || []).find(l => l.id === id);
@@ -3927,7 +3931,7 @@
             if (sendBtn) sendBtn.style.display = "none";
           }
           if (!res.already_handled) {
-            showToast("Đã tự động gửi email thông báo kích hoạt thành công qua GAS!", "success", 5000);
+            showToast("Đã tự động gửi email cho Serial " + serialText + " thành công!", "success", 4000);
           }
         } else {
           if (badgeEl) {
@@ -3936,7 +3940,7 @@
           }
           const found = (systemData.licenses || []).find(l => l.id === id);
           if (found) found.gmail_notify = "ERROR";
-          showToast("Lỗi gửi email tự động: " + ((res && res.error) || "Không gửi được"), "error", 6000);
+          showToast("Lỗi gửi email tự động cho Serial " + serialText + ": " + ((res && res.error) || "Không gửi được"), "error", 6000);
         }
       } catch (err) {
         if (badgeEl) {
@@ -4339,7 +4343,10 @@
     }
 
     async function sendAdminAction(payload, customLoadingText) {
-      showActionLoader(customLoadingText || "Đang xử lý yêu cầu...");
+      const isSilent = customLoadingText === false;
+      if (!isSilent) {
+        showActionLoader(customLoadingText || "Đang xử lý yêu cầu...");
+      }
       try {
         const res = await fetch("/api/admin/action", {
           method: "POST",
@@ -4361,7 +4368,9 @@
       } catch (err) {
         return { success: false, error: err.message };
       } finally {
-        hideActionLoader();
+        if (!isSilent) {
+          hideActionLoader();
+        }
       }
     }
 
