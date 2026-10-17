@@ -231,16 +231,21 @@ export default {
           }
         }
 
-        // Tự động đẩy file phân mảnh lên GitHub Repo cho Cloudflare Pages
-        const gitRes = await syncShardToGitHub(env, prefix);
-        let msg = "Đã thêm thành công!";
-        if (gitRes && gitRes.success) {
-          msg += ` (Đã lưu json/${prefix}.json lên GitHub)`;
-        } else if (gitRes && !gitRes.success) {
-          msg += ` (Lưu ý GitHub: ${gitRes.error})`;
+        // Tự động đẩy file phân mảnh lên GitHub Repo cho Cloudflare Pages (dùng block commit)
+        const gitRes = await syncShardsBlockToGitHub(env, [prefix], `Add license ${serial}`);
+        if (!gitRes.success) {
+          return jsonResponse({
+            success: false,
+            error: `Đã thêm vào CSDL nhưng lỗi đồng bộ GitHub: ${gitRes.error}`
+          }, 500);
         }
 
-        return jsonResponse({ success: true, message: msg, prefix, id: newId });
+        return jsonResponse({
+          success: true,
+          message: `Đã thêm thành công và đồng bộ shard json/${prefix}.json lên GitHub!`,
+          prefix,
+          id: newId
+        });
       }
       else if (action === "update_license") {
         const { id, rom_version, key_status, email_phone, country, note } = body;
@@ -270,19 +275,21 @@ export default {
            WHERE id = ?`
         ).bind(serial, rom_version, key_status, email_phone || '', country, note || '', newPrefix, id).run();
 
-        // Đồng bộ lên GitHub
-        let gitNotice = "";
-        if (oldPrefix && oldPrefix !== newPrefix) {
-          await syncShardToGitHub(env, oldPrefix);
-        }
-        if (newPrefix) {
-          const gitRes = await syncShardToGitHub(env, newPrefix);
-          if (gitRes && !gitRes.success) {
-            gitNotice = ` (Lưu ý GitHub: ${gitRes.error})`;
-          }
+        // Đồng bộ block lên GitHub
+        const prefixesToSync = Array.from(new Set([oldPrefix, newPrefix].filter(Boolean)));
+        const gitRes = await syncShardsBlockToGitHub(env, prefixesToSync, `Update license ${serial}`);
+        if (!gitRes.success) {
+          return jsonResponse({
+            success: false,
+            error: `Đã cập nhật CSDL nhưng lỗi đồng bộ GitHub: ${gitRes.error}`
+          }, 500);
         }
 
-        return jsonResponse({ success: true, message: `Đã cập nhật thành công!${gitNotice}`, prefix: newPrefix });
+        return jsonResponse({
+          success: true,
+          message: `Đã cập nhật thành công và đồng bộ ${prefixesToSync.length} shard lên GitHub!`,
+          prefix: newPrefix
+        });
       }
       else if (action === "delete_license") {
         const oldItem = await env.DB.prepare("SELECT serial, prefix FROM licenses WHERE id = ?").bind(body.id).first();
@@ -290,14 +297,16 @@ export default {
 
         await env.DB.prepare("DELETE FROM licenses WHERE id = ?").bind(body.id).run();
 
-        let gitNotice = "";
         if (prefix) {
-          const gitRes = await syncShardToGitHub(env, prefix);
-          if (gitRes && !gitRes.success) {
-            gitNotice = ` (Lưu ý GitHub: ${gitRes.error})`;
+          const gitRes = await syncShardsBlockToGitHub(env, [prefix], `Delete license ${body.id}`);
+          if (!gitRes.success) {
+            return jsonResponse({
+              success: false,
+              error: `Đã xóa trong CSDL nhưng lỗi đồng bộ GitHub: ${gitRes.error}`
+            }, 500);
           }
         }
-        return jsonResponse({ success: true, message: `Đã xóa kích hoạt thành công!${gitNotice}` });
+        return jsonResponse({ success: true, message: `Đã xóa kích hoạt thành công và cập nhật GitHub!` });
       }
       else if (action === "sync_single_shard") {
         const prefix = String(body.prefix ?? "").trim().toLowerCase();
@@ -305,13 +314,13 @@ export default {
           return jsonResponse({ success: false, error: "Thiếu prefix" }, 400);
         }
         await ensureDbSchema(env);
-        const gitRes = await syncShardToGitHub(env, prefix);
+        const gitRes = await syncShardsBlockToGitHub(env, [prefix], `Sync shard json/${prefix}.json`);
         if (gitRes && gitRes.success) {
           return jsonResponse({
             success: true,
             prefix,
             count: gitRes.count,
-            message: `Đã lưu json/${prefix}.json (${gitRes.count || 0} bản ghi) lên GitHub thành công!`
+            message: `Đã lưu json/${prefix}.json lên GitHub thành công!`
           });
         } else {
           return jsonResponse({
@@ -323,27 +332,62 @@ export default {
       }
       else if (action === "reindex_all_prefixes") {
         await ensureDbSchema(env);
-        const { results } = await env.DB.prepare("SELECT id, serial FROM licenses").all();
-        const allPrefixes = new Set();
-        const stmts = [];
-        for (const row of (results || [])) {
+        const { results } = await env.DB.prepare("SELECT id, serial, rom_version, key_status FROM licenses").all();
+        const records = results || [];
+        const xorKey = env?.XOR_KEY;
+
+        const prefixMap = new Map();
+        const updateStmts = [];
+
+        for (const row of records) {
           const p = getDevicePrefix(row.serial);
-          allPrefixes.add(p);
-          stmts.push(env.DB.prepare("UPDATE licenses SET prefix = ? WHERE id = ?").bind(p, row.id));
+          updateStmts.push(env.DB.prepare("UPDATE licenses SET prefix = ? WHERE id = ?").bind(p, row.id));
+
+          if (!prefixMap.has(p)) prefixMap.set(p, []);
+          const raw = `${row.serial}:${row.rom_version}:${row.key_status}`;
+          prefixMap.get(p).push(xorEncryptHex(raw, xorKey));
         }
 
-        if (stmts.length > 0) {
-          for (let i = 0; i < stmts.length; i += 100) {
-            await env.DB.batch(stmts.slice(i, i + 100));
+        if (updateStmts.length > 0) {
+          for (let i = 0; i < updateStmts.length; i += 100) {
+            await env.DB.batch(updateStmts.slice(i, i + 100));
           }
         }
 
-        const sortedPrefixes = Array.from(allPrefixes).sort();
+        const filesToCommit = [];
+        for (const [p, encList] of prefixMap.entries()) {
+          filesToCommit.push({
+            path: `json/${p}.json`,
+            content: JSON.stringify(encList, null, 2)
+          });
+        }
+
+        // Thêm cả json/giftcode.json vào cùng 1 block commit duy nhất
+        try {
+          const giftRes = await env.DB.prepare(
+            "SELECT gift_code, start_date, expiration_date FROM gift_keys ORDER BY created_at DESC"
+          ).all();
+          const giftList = (giftRes?.results || []).map(r => {
+            const raw = `${r.gift_code}:${r.start_date}:${r.expiration_date}`;
+            return xorEncryptHex(raw, xorKey);
+          });
+          filesToCommit.push({
+            path: "json/giftcode.json",
+            content: JSON.stringify(giftList, null, 2)
+          });
+        } catch (_) {}
+
+        // Gửi toàn bộ block lên GitHub trong 1 commit duy nhất
+        const gitRes = await commitFilesToGitHubBlock(env, filesToCommit, `Đồng bộ toàn bộ ${filesToCommit.length} file Shard via MRD Admin`);
+        if (!gitRes.success) {
+          return jsonResponse({ success: false, error: gitRes.error }, 500);
+        }
+
         return jsonResponse({
           success: true,
-          prefixes: sortedPrefixes,
-          totalLicenses: results ? results.length : 0,
-          message: `Đã cập nhật tiền tố cho ${results ? results.length : 0} mục trong CSDL D1!`
+          totalFiles: filesToCommit.length,
+          totalLicenses: records.length,
+          message: `Đã đóng gói và đồng bộ thành công block ${filesToCommit.length} file lên GitHub!`
         });
       }
       else if (action === "create_gift_key") {
@@ -370,14 +414,17 @@ export default {
         `).bind(gift_code, start_date, expiration_date, note || '', Date.now()).run();
 
         const gitRes = await syncGiftCodeToGitHub(env);
-        let msg = "Đã tạo Gift Code thành công!";
-        if (gitRes && gitRes.success) {
-          msg += " (Đã lưu json/giftcode.json lên GitHub)";
-        } else if (gitRes && !gitRes.success) {
-          msg += ` (Lưu ý GitHub: ${gitRes.error})`;
+        if (!gitRes.success) {
+          return jsonResponse({
+            success: false,
+            error: `Đã lưu CSDL nhưng lỗi đồng bộ GitHub: ${gitRes.error}`
+          }, 500);
         }
 
-        return jsonResponse({ success: true, message: msg });
+        return jsonResponse({
+          success: true,
+          message: "Đã tạo Gift Code thành công và đồng bộ json/giftcode.json lên GitHub!"
+        });
       }
       else if (action === "update_gift_key") {
         let { id, start_date, expiration_date, note } = body;
@@ -403,22 +450,33 @@ export default {
         `).bind(gift_code, start_date, expiration_date, note || '', id).run();
 
         const gitRes = await syncGiftCodeToGitHub(env);
-        let msg = "Đã cập nhật Gift Code thành công!";
-        if (gitRes && !gitRes.success) {
-          msg += ` (Lưu ý GitHub: ${gitRes.error})`;
+        if (!gitRes.success) {
+          return jsonResponse({
+            success: false,
+            error: `Đã cập nhật CSDL nhưng lỗi đồng bộ GitHub: ${gitRes.error}`
+          }, 500);
         }
 
-        return jsonResponse({ success: true, message: msg });
+        return jsonResponse({
+          success: true,
+          message: "Đã cập nhật Gift Code thành công và đồng bộ json/giftcode.json lên GitHub!"
+        });
       }
       else if (action === "delete_gift_key") {
         await env.DB.prepare("DELETE FROM gift_keys WHERE id = ?").bind(body.id).run();
 
         const gitRes = await syncGiftCodeToGitHub(env);
-        let msg = "Đã xóa Gift Code thành công!";
-        if (gitRes && !gitRes.success) {
-          msg += ` (Lưu ý GitHub: ${gitRes.error})`;
+        if (!gitRes.success) {
+          return jsonResponse({
+            success: false,
+            error: `Đã xóa trong CSDL nhưng lỗi đồng bộ GitHub: ${gitRes.error}`
+          }, 500);
         }
-        return jsonResponse({ success: true, message: msg });
+
+        return jsonResponse({
+          success: true,
+          message: "Đã xóa Gift Code thành công và cập nhật json/giftcode.json lên GitHub!"
+        });
       }
       else if (action === "sync_gift_code") {
         const gitRes = await syncGiftCodeToGitHub(env);
@@ -453,17 +511,20 @@ export default {
         await env.DB.prepare(`DELETE FROM licenses WHERE id IN (${placeholders})`).bind(...ids).run();
 
         const delPrefixesList = Array.from(affectedPrefixes).sort();
-        if (delPrefixesList.length <= 2) {
-          for (const p of delPrefixesList) {
-            await syncShardToGitHub(env, p);
-          }
+        const gitRes = await syncShardsBlockToGitHub(env, delPrefixesList, `Xóa ${ids.length} thiết bị (${delPrefixesList.length} shards)`);
+
+        if (!gitRes.success) {
+          return jsonResponse({
+            success: false,
+            count: ids.length,
+            error: `Đã xóa trong CSDL nhưng lỗi đồng bộ GitHub: ${gitRes.error}`
+          }, 500);
         }
 
         return jsonResponse({
           success: true,
           count: ids.length,
-          prefixes: delPrefixesList,
-          message: `Đã xóa thành công ${ids.length} mục!`
+          message: `Đã xóa thành công ${ids.length} mục và cập nhật block ${delPrefixesList.length} shard lên GitHub!`
         });
       }
       else if (action === "bulk_update_licenses") {
@@ -507,17 +568,20 @@ export default {
         }
 
         const updatePrefixesList = Array.from(affectedPrefixes).sort();
-        if (updatePrefixesList.length <= 2) {
-          for (const p of updatePrefixesList) {
-            await syncShardToGitHub(env, p);
-          }
+        const gitRes = await syncShardsBlockToGitHub(env, updatePrefixesList, `Cập nhật ${stmts.length} thiết bị (${updatePrefixesList.length} shards)`);
+
+        if (!gitRes.success) {
+          return jsonResponse({
+            success: false,
+            count: stmts.length,
+            error: `Đã cập nhật CSDL nhưng lỗi đồng bộ GitHub: ${gitRes.error}`
+          }, 500);
         }
 
         return jsonResponse({
           success: true,
           count: stmts.length,
-          prefixes: updatePrefixesList,
-          message: `Đã lưu và đồng bộ thành công ${stmts.length} mục!`
+          message: `Đã cập nhật thành công ${stmts.length} mục và đồng bộ block ${updatePrefixesList.length} shard lên GitHub!`
         });
       }
       else if (action === "bulk_import_licenses") {
@@ -577,19 +641,23 @@ export default {
 
         // Nếu có mục mới, đồng bộ các prefix mới. Nếu toàn bộ bị trùng (ví dụ upload lại để fix file json), đồng bộ tất cả prefix có trong file!
         const prefixesToSync = (affectedPrefixes.size > 0 ? Array.from(affectedPrefixes) : Array.from(allUploadedPrefixes)).sort();
+        const gitRes = await syncShardsBlockToGitHub(env, prefixesToSync, `Nhập ${stmts.length} thiết bị từ Excel (${prefixesToSync.length} shards)`);
 
-        if (prefixesToSync.length <= 2) {
-          for (const p of prefixesToSync) {
-            await syncShardToGitHub(env, p);
-          }
+        if (!gitRes.success) {
+          return jsonResponse({
+            success: false,
+            imported: stmts.length,
+            skipped,
+            error: `Đã nhập CSDL (${stmts.length} mục) nhưng lỗi đồng bộ GitHub: ${gitRes.error}`
+          }, 500);
         }
 
         return jsonResponse({
           success: true,
           imported: stmts.length,
           skipped,
-          prefixes: prefixesToSync,
-          message: `Đã nhập thành công ${stmts.length} mục vào CSDL D1 (Bỏ qua ${skipped} mục trùng lặp)!`
+          shardsCount: prefixesToSync.length,
+          message: `Đã nhập thành công ${stmts.length} mục và đồng bộ block ${prefixesToSync.length} shard lên GitHub!`
         });
       }
       else if (action === "bulk_delete_gift_keys") {
@@ -601,9 +669,15 @@ export default {
         const placeholders = ids.map(() => "?").join(",");
         await env.DB.prepare(`DELETE FROM gift_keys WHERE id IN (${placeholders})`).bind(...ids).run();
 
-        await syncGiftCodeToGitHub(env);
+        const gitRes = await syncGiftCodeToGitHub(env);
+        if (!gitRes.success) {
+          return jsonResponse({
+            success: false,
+            error: `Đã xóa trong CSDL nhưng lỗi đồng bộ GitHub: ${gitRes.error}`
+          }, 500);
+        }
 
-        return jsonResponse({ success: true, count: ids.length, message: `Đã xóa thành công ${ids.length} Gift Code!` });
+        return jsonResponse({ success: true, count: ids.length, message: `Đã xóa thành công ${ids.length} Gift Code và cập nhật GitHub!` });
       }
       else if (action === "bulk_update_gift_keys") {
         const { items } = body;
@@ -628,9 +702,15 @@ export default {
             await env.DB.batch(stmts.slice(i, i + 100));
           }
         }
-        await syncGiftCodeToGitHub(env);
+        const gitRes = await syncGiftCodeToGitHub(env);
+        if (!gitRes.success) {
+          return jsonResponse({
+            success: false,
+            error: `Đã cập nhật CSDL nhưng lỗi đồng bộ GitHub: ${gitRes.error}`
+          }, 500);
+        }
 
-        return jsonResponse({ success: true, count: stmts.length, message: `Đã cập nhật ${stmts.length} Gift Code!` });
+        return jsonResponse({ success: true, count: stmts.length, message: `Đã cập nhật ${stmts.length} Gift Code và đồng bộ GitHub!` });
       }
       else if (action === "bulk_import_roms") {
         const { names } = body;
@@ -932,11 +1012,17 @@ async function ensureDbSchema(env) {
 }
 
 /**
- * Tự động đồng bộ file json/giftcode.json lên GitHub Repo
+ * Đóng gói toàn bộ các file thành 1 Block duy nhất và commit lên GitHub qua Git Data Tree API
+ * Cơ chế thử lại: Tự động thử lại 2 lần (tổng 3 lần) nếu GitHub trả về lỗi.
  */
-async function syncGiftCodeToGitHub(env) {
+async function commitFilesToGitHubBlock(env, filesArray, commitMessage) {
+  if (!filesArray || filesArray.length === 0) {
+    return { success: true, count: 0, message: "Không có file nào cần commit" };
+  }
+
   const token = env?.GITHUB_TOKEN ? String(env.GITHUB_TOKEN).trim() : null;
   const rawRepo = env?.GITHUB_REPO ? String(env.GITHUB_REPO).trim() : null;
+  const branch = env?.GITHUB_BRANCH ? String(env.GITHUB_BRANCH).trim() : "main";
 
   if (!token) {
     return { success: false, error: "Chưa cấu hình biến GITHUB_TOKEN trong Settings -> Environment variables của Pages" };
@@ -949,6 +1035,173 @@ async function syncGiftCodeToGitHub(env) {
     .replace(/^https?:\/\/github\.com\//i, "")
     .replace(/^\/+|\/+$/g, "");
 
+  const headers = {
+    "Authorization": `Bearer ${token}`,
+    "Accept": "application/vnd.github+json",
+    "User-Agent": "MRD-Cloudflare-Pages"
+  };
+
+  const MAX_ATTEMPTS = 3; // Lần 1 + thử lại 2 lần
+  let lastError = "";
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      // 1. Lấy SHA commit mới nhất và Base Tree SHA của nhánh
+      const branchRes = await fetch(`https://api.github.com/repos/${cleanRepo}/branches/${branch}`, { headers });
+      if (!branchRes.ok) {
+        const txt = await branchRes.text();
+        throw new Error(`Lấy branch ${branch} thất bại (HTTP ${branchRes.status}): ${txt}`);
+      }
+      const branchData = await branchRes.json();
+      const latestCommitSha = branchData.commit.sha;
+      const baseTreeSha = branchData.commit.commit.tree.sha;
+
+      // 2. Tạo Git Tree chứa block tất cả các file cần cập nhật
+      const treeItems = filesArray.map(f => ({
+        path: f.path,
+        mode: "100644",
+        type: "blob",
+        content: f.content
+      }));
+
+      const treeRes = await fetch(`https://api.github.com/repos/${cleanRepo}/git/trees`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base_tree: baseTreeSha,
+          tree: treeItems
+        })
+      });
+
+      if (!treeRes.ok) {
+        const txt = await treeRes.text();
+        throw new Error(`Tạo Git Tree thất bại (HTTP ${treeRes.status}): ${txt}`);
+      }
+      const treeData = await treeRes.json();
+      const newTreeSha = treeData.sha;
+
+      // 3. Tạo Commit duy nhất đại diện cho toàn bộ block file
+      const commitRes = await fetch(`https://api.github.com/repos/${cleanRepo}/git/commits`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: commitMessage || `Sync block ${filesArray.length} files via MRD License Admin [skip ci]`,
+          tree: newTreeSha,
+          parents: [latestCommitSha]
+        })
+      });
+
+      if (!commitRes.ok) {
+        const txt = await commitRes.text();
+        throw new Error(`Tạo Git Commit thất bại (HTTP ${commitRes.status}): ${txt}`);
+      }
+      const commitData = await commitRes.json();
+      const newCommitSha = commitData.sha;
+
+      // 4. Cập nhật con trỏ branch trỏ tới commit mới
+      const refRes = await fetch(`https://api.github.com/repos/${cleanRepo}/git/refs/heads/${branch}`, {
+        method: "PATCH",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sha: newCommitSha,
+          force: false
+        })
+      });
+
+      if (!refRes.ok) {
+        const txt = await refRes.text();
+        throw new Error(`Cập nhật nhánh ${branch} thất bại (HTTP ${refRes.status}): ${txt}`);
+      }
+
+      // Hoàn thành xuất sắc trong attempt này
+      return {
+        success: true,
+        count: filesArray.length,
+        commitSha: newCommitSha,
+        attempt,
+        message: `Đã đồng bộ thành công block ${filesArray.length} file lên GitHub (Commit: ${newCommitSha.substring(0, 7)})!`
+      };
+    } catch (err) {
+      lastError = err.message;
+      console.warn(`Lần thử ${attempt}/${MAX_ATTEMPTS} đồng bộ block GitHub thất bại:`, lastError);
+
+      if (attempt < MAX_ATTEMPTS) {
+        // Đợi 1.5s trước khi thử lại
+        await new Promise(r => setTimeout(r, 1500));
+      }
+    }
+  }
+
+  // Cả 3 lần đều không thành công -> Báo lỗi hoàn toàn
+  return {
+    success: false,
+    count: filesArray.length,
+    error: `Đã thử lại 2 lần (tổng 3 lần) nhưng GitHub vẫn báo lỗi: ${lastError}`
+  };
+}
+
+/**
+ * Gom toàn bộ các shard tiền tố được chỉ định vào 1 block và đồng bộ 1 lần duy nhất lên GitHub
+ */
+async function syncShardsBlockToGitHub(env, prefixes, customMessage) {
+  if (!prefixes) return { success: true, count: 0 };
+  const list = Array.from(new Set(Array.isArray(prefixes) ? prefixes : [prefixes]))
+    .map(p => String(p ?? "").trim().toLowerCase())
+    .filter(Boolean);
+
+  if (list.length === 0) return { success: true, count: 0 };
+
+  try {
+    const filesToCommit = [];
+    const xorKey = env?.XOR_KEY;
+
+    for (const prefix of list) {
+      // Tự động gán prefix cho các bản ghi cũ hoặc bị trống có serial khớp với prefix này
+      try {
+        await env.DB.prepare(`
+          UPDATE licenses 
+          SET prefix = ? 
+          WHERE (prefix IS NULL OR prefix = '' OR prefix != ?) 
+            AND (
+              CASE 
+                WHEN length(lower(replace(replace(serial, ' ', ''), '-', ''))) >= 2 
+                THEN substr(lower(replace(replace(serial, ' ', ''), '-', '')), 1, 2)
+                ELSE substr(lower(replace(replace(serial, ' ', ''), '-', '')) || '00', 1, 2)
+              END = ?
+            )
+        `).bind(prefix, prefix, prefix).run();
+      } catch (_) {}
+
+      const { results } = await env.DB.prepare(
+        "SELECT serial, rom_version, key_status FROM licenses WHERE prefix = ?"
+      ).bind(prefix).all();
+
+      const records = results || [];
+
+      // Format: SERIAL:ROM_VERSION:KEY_STATUS -> XOR encrypt với khóa env.XOR_KEY -> Hex
+      const encryptedList = records.map(r => {
+        const raw = `${r.serial}:${r.rom_version}:${r.key_status}`;
+        return xorEncryptHex(raw, xorKey);
+      });
+
+      const fileContent = JSON.stringify(encryptedList, null, 2);
+      filesToCommit.push({
+        path: `json/${prefix}.json`,
+        content: fileContent
+      });
+    }
+
+    return await commitFilesToGitHubBlock(env, filesToCommit, customMessage);
+  } catch (err) {
+    console.error("Lỗi ngoại lệ syncShardsBlockToGitHub:", err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Đồng bộ file json/giftcode.json lên GitHub
+ */
+async function syncGiftCodeToGitHub(env) {
   try {
     const { results } = await env.DB.prepare(
       "SELECT gift_code, start_date, expiration_date FROM gift_keys ORDER BY created_at DESC"
@@ -964,220 +1217,21 @@ async function syncGiftCodeToGitHub(env) {
     });
 
     const fileContent = JSON.stringify(encryptedList, null, 2);
-    let binary = "";
-    const encoder = new TextEncoder();
-    const utf8Bytes = encoder.encode(fileContent);
-    for (let i = 0; i < utf8Bytes.length; i++) {
-      binary += String.fromCharCode(utf8Bytes[i]);
-    }
-    const contentBase64 = btoa(binary);
-
-    const filePath = "json/giftcode.json";
-    const apiUrl = `https://api.github.com/repos/${cleanRepo}/contents/${filePath}`;
-    const headers = {
-      "Authorization": `Bearer ${token}`,
-      "Accept": "application/vnd.github+json",
-      "User-Agent": "MRD-Cloudflare-Pages"
-    };
-
-    let existingSha = null;
-    try {
-      const getRes = await fetch(apiUrl, { headers });
-      if (getRes.ok) {
-        const fileInfo = await getRes.json();
-        existingSha = fileInfo.sha;
-      }
-    } catch (e) {
-      // File chưa tồn tại
-    }
-
-    const putBody = {
-      message: `Sync ${filePath} via MRD License Admin [skip ci]`,
-      content: contentBase64
-    };
-    if (existingSha) {
-      putBody.sha = existingSha;
-    }
-
-    let putRes = await fetch(apiUrl, {
-      method: "PUT",
-      headers: {
-        ...headers,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(putBody)
-    });
-
-    if (putRes.status === 409) {
-      await new Promise(r => setTimeout(r, 1200));
-      try {
-        const retryGet = await fetch(apiUrl, { headers });
-        if (retryGet.ok) {
-          const fileInfo = await retryGet.json();
-          putBody.sha = fileInfo.sha;
-        }
-      } catch (_) {}
-      putRes = await fetch(apiUrl, {
-        method: "PUT",
-        headers: {
-          ...headers,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(putBody)
-      });
-    }
-
-    if (!putRes.ok) {
-      const errText = await putRes.text();
-      let errMsg = errText;
-      try {
-        const errJson = JSON.parse(errText);
-        if (errJson.message) errMsg = errJson.message;
-      } catch (_) { }
-      console.error(`Lỗi đẩy file ${filePath} lên GitHub:`, errMsg);
-      return { success: false, error: `GitHub API HTTP ${putRes.status}: ${errMsg}` };
-    }
-
-    return { success: true };
+    return await commitFilesToGitHubBlock(env, [{
+      path: "json/giftcode.json",
+      content: fileContent
+    }], "Sync json/giftcode.json via MRD License Admin [skip ci]");
   } catch (err) {
-    console.error(`Lỗi ngoại lệ syncGiftCodeToGitHub:`, err.message);
+    console.error("Lỗi ngoại lệ syncGiftCodeToGitHub:", err.message);
     return { success: false, error: err.message };
   }
 }
 
 /**
- * Tự động đồng bộ file {prefix}.json lên GitHub Repo đã liên kết với Cloudflare Pages
+ * Tương thích ngược: Đồng bộ 1 shard đơn lẻ
  */
 async function syncShardToGitHub(env, prefix) {
-  prefix = String(prefix ?? "").trim().toLowerCase();
-  if (!prefix) return { success: false, error: "Thiếu prefix" };
-
-  const token = env?.GITHUB_TOKEN ? String(env.GITHUB_TOKEN).trim() : null;
-  const rawRepo = env?.GITHUB_REPO ? String(env.GITHUB_REPO).trim() : null;
-
-  if (!token) {
-    return { success: false, error: "Chưa cấu hình biến GITHUB_TOKEN trong Settings -> Environment variables của Pages" };
-  }
-  if (!rawRepo) {
-    return { success: false, error: "Chưa cấu hình biến GITHUB_REPO trong Settings -> Environment variables của Pages" };
-  }
-
-  const cleanRepo = rawRepo
-    .replace(/^https?:\/\/github\.com\//i, "")
-    .replace(/^\/+|\/+$/g, "");
-
-  try {
-    // Tự động gán prefix cho các bản ghi cũ hoặc bị trống có serial khớp với prefix này
-    try {
-      await env.DB.prepare(`
-        UPDATE licenses 
-        SET prefix = ? 
-        WHERE (prefix IS NULL OR prefix = '' OR prefix != ?) 
-          AND (
-            CASE 
-              WHEN length(lower(replace(replace(serial, ' ', ''), '-', ''))) >= 2 
-              THEN substr(lower(replace(replace(serial, ' ', ''), '-', '')), 1, 2)
-              ELSE substr(lower(replace(replace(serial, ' ', ''), '-', '')) || '00', 1, 2)
-            END = ?
-          )
-      `).bind(prefix, prefix, prefix).run();
-    } catch (_) {}
-
-    const { results } = await env.DB.prepare(
-      "SELECT serial, rom_version, key_status FROM licenses WHERE prefix = ?"
-    ).bind(prefix).all();
-
-    const records = results || [];
-
-    // Format: SERIAL:ROM_VERSION:KEY_STATUS -> XOR encrypt với khóa env.XOR_KEY -> Hex
-    const xorKey = env?.XOR_KEY;
-    const encryptedList = records.map(r => {
-      const raw = `${r.serial}:${r.rom_version}:${r.key_status}`;
-      return xorEncryptHex(raw, xorKey);
-    });
-
-    const fileContent = JSON.stringify(encryptedList, null, 2);
-    let binary = "";
-    const encoder = new TextEncoder();
-    const utf8Bytes = encoder.encode(fileContent);
-    for (let i = 0; i < utf8Bytes.length; i++) {
-      binary += String.fromCharCode(utf8Bytes[i]);
-    }
-    const contentBase64 = btoa(binary);
-
-    const filePath = `json/${prefix}.json`;
-    const apiUrl = `https://api.github.com/repos/${cleanRepo}/contents/${filePath}`;
-    const headers = {
-      "Authorization": `Bearer ${token}`,
-      "Accept": "application/vnd.github+json",
-      "User-Agent": "MRD-Cloudflare-Pages"
-    };
-
-    // Kiểm tra file đã có trên GitHub chưa để lấy SHA (bắt buộc khi cập nhật file)
-    let existingSha = null;
-    try {
-      const getRes = await fetch(apiUrl, { headers });
-      if (getRes.ok) {
-        const fileInfo = await getRes.json();
-        existingSha = fileInfo.sha;
-      }
-    } catch (e) {
-      // File chưa tồn tại
-    }
-
-    const putBody = {
-      message: `Sync shard ${filePath} via MRD License Admin [skip ci]`,
-      content: contentBase64
-    };
-    if (existingSha) {
-      putBody.sha = existingSha;
-    }
-
-    let putRes = await fetch(apiUrl, {
-      method: "PUT",
-      headers: {
-        ...headers,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(putBody)
-    });
-
-    // Tự động thử lại khi gặp 409 (Conflict - Git tree lock do commit nhanh)
-    if (putRes.status === 409) {
-      await new Promise(r => setTimeout(r, 1200));
-      try {
-        const retryGet = await fetch(apiUrl, { headers });
-        if (retryGet.ok) {
-          const fileInfo = await retryGet.json();
-          putBody.sha = fileInfo.sha;
-        }
-      } catch (_) {}
-      putRes = await fetch(apiUrl, {
-        method: "PUT",
-        headers: {
-          ...headers,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(putBody)
-      });
-    }
-
-    if (!putRes.ok) {
-      const errText = await putRes.text();
-      let errMsg = errText;
-      try {
-        const errJson = JSON.parse(errText);
-        if (errJson.message) errMsg = errJson.message;
-      } catch (_) { }
-      console.error(`Lỗi đẩy file ${filePath} lên GitHub:`, errMsg);
-      return { success: false, error: `GitHub API HTTP ${putRes.status}: ${errMsg}` };
-    }
-
-    return { success: true, count: records.length };
-  } catch (err) {
-    console.error(`Lỗi ngoại lệ syncShardToGitHub (${prefix}):`, err.message);
-    return { success: false, error: err.message };
-  }
+  return await syncShardsBlockToGitHub(env, [prefix]);
 }
 
 /**
@@ -2535,15 +2589,12 @@ function renderAdminHTML() {
       <input type="hidden" id="editId">
       <div class="form-group">
         <label>JSON RAW</label>
-        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+        <div>
           <a id="editPrefixLink" href="#" target="_blank" class="btn btn-blue" style="display: inline-flex; align-items: center; gap: 8px; text-decoration: none; font-family: monospace; font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 6px;" title="Mở file JSON RAW">
             <!--<span>🚀</span>-->
             <span id="editPrefixText">json/unk.json</span>
             <span style="font-size: 11px; opacity: 0.85;">↗</span>
           </a>
-          <button type="button" class="btn btn-blue" id="btnSyncCurrentShard" onclick="handleSyncCurrentDeviceShard()" title="Đồng bộ lại file Shard này lên GitHub" style="padding: 8px 14px; font-size: 13px; display: inline-flex; align-items: center; gap: 6px;">
-            <span>🔄</span> <span>Đồng bộ Shard lên GitHub</span>
-          </button>
         </div>
       </div>
       <div class="form-group">
@@ -2590,26 +2641,7 @@ function renderAdminHTML() {
     </div>
   </div>
 
-  <!-- MODAL TIẾN TRÌNH ĐỒNG BỘ SHARDS -->
-  <div class="modal-backdrop" id="syncProgressModal" style="z-index: 10000;">
-    <div class="modal-box" style="max-width: 460px; text-align: center;">
-      <div class="modal-header" style="justify-content: center; border-bottom: none; padding-bottom: 0;">
-        <h3 id="syncProgressTitle" style="font-size: 17px; display: flex; align-items: center; justify-content: center; gap: 8px;">
-          <span>🔄</span> <span id="syncProgressTitleText">Đang đồng bộ Shards lên GitHub</span>
-        </h3>
-      </div>
-      <div style="padding: 16px 8px;">
-        <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;" id="syncProgressDetailText">Đang chuẩn bị...</div>
-        <div style="background: rgba(148, 163, 184, 0.2); border-radius: 999px; height: 10px; width: 100%; overflow: hidden; margin-bottom: 10px;">
-          <div id="syncProgressBar" style="background: linear-gradient(90deg, #38bdf8, #2563eb); height: 100%; width: 0%; transition: width 0.25s ease; border-radius: 999px;"></div>
-        </div>
-        <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; color: var(--text-muted);">
-          <span id="syncProgressPercent">0%</span>
-          <span id="syncProgressCount">0 / 0</span>
-        </div>
-      </div>
-    </div>
-  </div>
+
 
   <script>
     let currentAuthToken = "";
@@ -3245,13 +3277,10 @@ function renderAdminHTML() {
             return '<td>' + mailBadgeHtml + '</td>';
           })() +
             '<td>' +
-              '<div style="display:inline-flex; align-items:center; gap:5px;">' +
-                '<a href="' + linkHref + '" target="_blank" onclick="event.stopPropagation()" title="Mở file JSON trên GitHub Repo" style="text-decoration:none;">' +
-                  '<!--<span class="badge badge-shard">🚀 json/' + item.prefix + '.json</span>-->' +
-                  '<span class="badge badge-shard">json/' + item.prefix + '.json</span>' +
-                '</a>' +
-                '<button type="button" data-prefix="' + item.prefix + '" onclick="event.stopPropagation(); handleQuickSyncShard(this.getAttribute(&quot;data-prefix&quot;))" title="Đồng bộ ngay shard json/' + item.prefix + '.json lên GitHub" style="background:none; border:none; cursor:pointer; padding:2px 4px; font-size:12px; line-height:1; opacity:0.75;">🔄</button>' +
-              '</div>' +
+              '<a href="' + linkHref + '" target="_blank" onclick="event.stopPropagation()" title="Mở file JSON trên GitHub Repo" style="text-decoration:none;">' +
+                '<!--<span class="badge badge-shard">🚀 json/' + item.prefix + '.json</span>-->' +
+                '<span class="badge badge-shard">json/' + item.prefix + '.json</span>' +
+              '</a>' +
             '</td>' +
             '<td class="col-note">' + (item.note || "") + '</td>' +
           '</tr>';
@@ -3453,14 +3482,10 @@ function renderAdminHTML() {
         }, "Đang xóa " + count + " mục & cập nhật Shards...");
         if (res && res.success) {
           selectedLicenseIds.clear();
-          if (res.prefixes && res.prefixes.length > 2) {
-            await syncShardsProgressively(res.prefixes, "Cập nhật Shards sau khi xóa");
-          } else {
-            showToast(res.message || "Đã xóa thành công!", "success", 6000);
-          }
+          showToast(res.message || "Đã xóa thành công!", "success", 6000);
           await loadAllData();
         } else {
-          showToast("Lỗi xóa hàng loạt: " + ((res && res.error) || "Không rõ"), "error", 6000);
+          showToast("Lỗi xóa hàng loạt: " + ((res && res.error) || "Không rõ"), "error", 10000);
         }
       } finally {
         setBtnLoading(delBtn, false);
@@ -3563,14 +3588,10 @@ function renderAdminHTML() {
         if (res && res.success) {
           closeBulkEditLicenseModal();
           selectedLicenseIds.clear();
-          if (res.prefixes && res.prefixes.length > 2) {
-            await syncShardsProgressively(res.prefixes, "Cập nhật Shards sau khi sửa");
-          } else {
-            showToast(res.message || "Đã lưu và đồng bộ thành công!", "success", 7000);
-          }
+          showToast(res.message || "Đã lưu và đồng bộ thành công!", "success", 7000);
           await loadAllData();
         } else {
-          showToast("Lỗi đồng bộ: " + ((res && res.error) || "Không rõ"), "error", 7000);
+          showToast("Lỗi đồng bộ: " + ((res && res.error) || "Không rõ"), "error", 10000);
         }
       } catch (err) {
         showToast("Lỗi kết nối: " + err.message, "error");
@@ -3967,19 +3988,15 @@ function renderAdminHTML() {
           res = await sendAdminAction({
             action: "bulk_import_licenses",
             items: parsedImportData
-          }, "Đang nhập danh sách Kích hoạt từ Excel...");
+          }, "Đang nhập dữ liệu & đồng bộ block Shards lên GitHub...");
 
           if (res && res.success) {
             closeUploadModal();
-            if (res.prefixes && res.prefixes.length > 0) {
-              await syncShardsProgressively(res.prefixes, "Đồng bộ Shards từ file Excel");
-            } else {
-              showToast(res.message || "Đã nhập dữ liệu thành công!", "success", 7000);
-            }
             await loadAllData();
+            showToast(res.message || "Đã nhập và đồng bộ block Shards thành công!", "success", 7000);
             return;
           } else {
-            showToast("Lỗi nhập dữ liệu: " + ((res && res.error) || "Không rõ"), "error", 7000);
+            showToast("Lỗi nhập dữ liệu: " + ((res && res.error) || "Không rõ"), "error", 10000);
           }
         } else {
           res = await sendAdminAction({
@@ -4346,55 +4363,11 @@ function renderAdminHTML() {
         }
       }
 
-      const syncShardBtn = document.getElementById("btnSyncCurrentShard");
-      if (syncShardBtn) {
-        syncShardBtn.innerHTML = "<span>🔄</span> <span>Đồng bộ Shard lên GitHub</span>";
-        syncShardBtn.disabled = false;
-      }
-
       toggleEditMode(false);
       const modal = document.getElementById("detailModal");
       modal.style.display = "flex";
       const box = modal.querySelector(".modal-box");
       if (box) box.scrollTop = 0;
-    }
-
-    async function handleSyncCurrentDeviceShard() {
-      if (!currentSelectedItem) return;
-      const prefix = currentSelectedItem.prefix || getDevicePrefix(currentSelectedItem.serial);
-      if (!prefix) return;
-      const btn = document.getElementById("btnSyncCurrentShard");
-      setBtnLoading(btn, true, "Đang đồng bộ...");
-      try {
-        const res = await sendAdminAction({ action: "sync_single_shard", prefix }, "Đang lưu json/" + prefix + ".json lên GitHub...");
-        if (res && res.success) {
-          showToast(res.message || ("Đã lưu json/" + prefix + ".json lên GitHub thành công!"), "success", 6000);
-          const rawUrl = getGithubFileUrl("json/" + prefix + ".json");
-          const prefixLink = document.getElementById("editPrefixLink");
-          if (prefixLink) prefixLink.href = rawUrl;
-        } else {
-          showToast("Lỗi đồng bộ: " + ((res && res.error) || "Không rõ"), "error", 8000);
-        }
-      } catch (err) {
-        showToast("Lỗi: " + err.message, "error");
-      } finally {
-        setBtnLoading(btn, false);
-      }
-    }
-
-    async function handleQuickSyncShard(prefix) {
-      if (!prefix) return;
-      showToast("Đang đồng bộ json/" + prefix + ".json lên GitHub...", "info", 3000);
-      try {
-        const res = await sendAdminAction({ action: "sync_single_shard", prefix });
-        if (res && res.success) {
-          showToast(res.message || ("Đã lưu json/" + prefix + ".json lên GitHub thành công!"), "success", 5000);
-        } else {
-          showToast("Lỗi đồng bộ json/" + prefix + ".json: " + ((res && res.error) || "Không rõ"), "error", 7000);
-        }
-      } catch (err) {
-        showToast("Lỗi kết nối: " + err.message, "error");
-      }
     }
 
     function closeModal() {
@@ -4515,110 +4488,22 @@ function renderAdminHTML() {
       }
     }
 
-    function showSyncProgressModal(titleText, total) {
-      const modal = document.getElementById("syncProgressModal");
-      if (!modal) return;
-      const titleEl = document.getElementById("syncProgressTitleText");
-      const detailEl = document.getElementById("syncProgressDetailText");
-      const barEl = document.getElementById("syncProgressBar");
-      const pctEl = document.getElementById("syncProgressPercent");
-      const countEl = document.getElementById("syncProgressCount");
-
-      if (titleEl) titleEl.innerText = titleText || "Đang đồng bộ Shards lên GitHub";
-      if (detailEl) detailEl.innerText = "Đang chuẩn bị...";
-      if (barEl) barEl.style.width = "0%";
-      if (pctEl) pctEl.innerText = "0%";
-      if (countEl) countEl.innerText = "0 / " + total;
-
-      modal.style.display = "flex";
-    }
-
-    function updateSyncProgress(current, total, detailText) {
-      const detailEl = document.getElementById("syncProgressDetailText");
-      const barEl = document.getElementById("syncProgressBar");
-      const pctEl = document.getElementById("syncProgressPercent");
-      const countEl = document.getElementById("syncProgressCount");
-
-      const pct = Math.round((current / total) * 100);
-      if (detailEl && detailText) detailEl.innerText = detailText;
-      if (barEl) barEl.style.width = pct + "%";
-      if (pctEl) pctEl.innerText = pct + "%";
-      if (countEl) countEl.innerText = current + " / " + total;
-    }
-
-    function hideSyncProgressModal() {
-      const modal = document.getElementById("syncProgressModal");
-      if (modal) modal.style.display = "none";
-    }
-
-    async function syncShardsProgressively(prefixes, taskTitle) {
-      if (!prefixes || prefixes.length === 0) return { success: true, count: 0 };
-
-      showSyncProgressModal(taskTitle, prefixes.length);
-
-      let successCount = 0;
-      const failList = [];
-
-      for (let i = 0; i < prefixes.length; i++) {
-        const p = prefixes[i];
-        updateSyncProgress(i + 1, prefixes.length, "Đang đẩy file json/" + p + ".json (" + (i + 1) + "/" + prefixes.length + ")...");
-
-        try {
-          let res = await sendAdminAction({ action: "sync_single_shard", prefix: p });
-          if (!res || !res.success) {
-            // Thử lại 1 lần sau 1.2s nếu gặp xung đột Git
-            await new Promise(r => setTimeout(r, 1200));
-            res = await sendAdminAction({ action: "sync_single_shard", prefix: p });
-          }
-
-          if (res && res.success) {
-            successCount++;
-          } else {
-            failList.push("json/" + p + ".json (" + (res ? res.error : "Không rõ") + ")");
-          }
-        } catch (e) {
-          failList.push("json/" + p + ".json (" + e.message + ")");
-        }
-
-        // Tạm nghỉ 350ms giữa các commit để GitHub xử lý hoàn tất git tree
-        if (i < prefixes.length - 1) {
-          await new Promise(r => setTimeout(r, 350));
-        }
-      }
-
-      hideSyncProgressModal();
-
-      if (failList.length === 0) {
-        showToast("✅ Đã tạo & đồng bộ thành công toàn bộ " + successCount + "/" + prefixes.length + " Shards lên GitHub!", "success", 7000);
-      } else {
-        showToast("⚠️ Hoàn tất " + successCount + "/" + prefixes.length + " Shards. Thất bại " + failList.length + " shard: " + failList.slice(0, 3).join(", "), "warn", 10000);
-      }
-
-      return { success: failList.length === 0, successCount, failList };
-    }
-
     async function handleSyncAllPrefixes() {
       const confirmed = await showConfirm(
         "Đồng bộ Shards tĩnh",
-        "Hệ thống sẽ tính toán lại tiền tố (Prefix) cho toàn bộ license trong CSDL D1 và đồng bộ từng file JSON lên GitHub Repo một cách an toàn (tránh timeout/thiếu file). Bạn có muốn tiếp tục?",
+        "Hệ thống sẽ gom toàn bộ các file Shard và Gift Code trong CSDL D1 thành 1 block và đồng bộ 1 lần duy nhất lên GitHub. Bạn có muốn tiếp tục?",
         false
       );
       if (!confirmed) return;
       const btn = document.getElementById("btnSyncShards");
-      setBtnLoading(btn, true, "Đang chuẩn bị...");
+      setBtnLoading(btn, true, "Đang đồng bộ...");
       try {
-        const res = await sendAdminAction({ action: "reindex_all_prefixes" }, "Đang cập nhật chỉ mục tiền tố trong CSDL D1...");
-        if (res && res.success && res.prefixes && res.prefixes.length > 0) {
-          await syncShardsProgressively(res.prefixes, "Đồng bộ toàn bộ Shards");
-          // Đồng bộ luôn giftcode.json
-          try {
-            await sendAdminAction({ action: "sync_gift_code" });
-          } catch (_) {}
+        const res = await sendAdminAction({ action: "reindex_all_prefixes" }, "Đang đóng gói block & đồng bộ toàn bộ Shards lên GitHub...");
+        if (res && res.success) {
+          showToast(res.message || "Đã đồng bộ thành công toàn bộ Shards lên GitHub!", "success", 7000);
           await loadAllData();
-        } else if (res && res.success) {
-          showToast("Không có Shard nào cần đồng bộ!", "info");
         } else {
-          showToast("Lỗi: " + ((res && res.error) || "Không rõ"), "error", 8000);
+          showToast("Lỗi đồng bộ: " + ((res && res.error) || "Không rõ"), "error", 10000);
         }
       } finally {
         setBtnLoading(btn, false);
