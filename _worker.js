@@ -1172,23 +1172,21 @@ async function syncShardsBlockToGitHub(env, prefixes, customMessage) {
 
 /**
  * Đồng bộ file json/giftcode.json lên GitHub
+ * Chỉ lưu các Gift Code còn hiệu lực (OK), tự động loại bỏ các mã đã hết hạn (BLOCK) để tệp siêu nhẹ
  */
 async function syncGiftCodeToGitHub(env) {
   try {
+    const today = new Date().toISOString().split("T")[0];
+
+    // Lọc trực tiếp từ CSDL: chỉ lấy các gift code còn hạn dùng (>= ngày hôm nay)
     const { results } = await env.DB.prepare(
-      "SELECT gift_code, start_date, expiration_date FROM gift_keys ORDER BY created_at DESC"
-    ).all();
+      "SELECT gift_code, start_date, expiration_date FROM gift_keys WHERE expiration_date >= ? ORDER BY created_at DESC"
+    ).bind(today).all();
 
     const records = results || [];
-    const xorKey = env?.XOR_KEY;
 
-    // Format: GIFT_CODE:START_DATE:EXPIRATION_DATE -> XOR encrypt với khóa env.XOR_KEY -> Hex
-    const encryptedList = records.map(r => {
-      const raw = `${r.gift_code}:${r.start_date}:${r.expiration_date}`;
-      return xorEncryptHex(raw, xorKey);
-    });
-
-    const fileContent = JSON.stringify(encryptedList, null, 2);
+    // Lưu Gift Code dạng JSON sạch không mã hóa, siêu nhẹ cho Android
+    const fileContent = JSON.stringify(records, null, 2);
     return await commitFilesToGitHubBlock(env, [{
       path: "json/giftcode.json",
       content: fileContent
@@ -1197,13 +1195,6 @@ async function syncGiftCodeToGitHub(env) {
     console.error("Lỗi ngoại lệ syncGiftCodeToGitHub:", err.message);
     return { success: false, error: err.message };
   }
-}
-
-/**
- * Tương thích ngược: Đồng bộ 1 shard đơn lẻ
- */
-async function syncShardToGitHub(env, prefix) {
-  return await syncShardsBlockToGitHub(env, [prefix]);
 }
 
 /**
@@ -1263,7 +1254,7 @@ function getDevicePrefix(serial) {
 }
 
 /**
- * Mã hóa chuỗi text bằng XOR với khóa lặp tuần hoàn (env.XOR_KEY), xuất ra Hex
+ * Mã hóa chuỗi text bằng XOR với khóa lặp tuần hoàn (env.XOR_KEY), xuất ra Hex cho Shards
  */
 function xorEncryptHex(text, key) {
   if (!key) return "";
@@ -1278,43 +1269,9 @@ function xorEncryptHex(text, key) {
   return hex;
 }
 
-
-
-async function sendMailAndUpdateStatus(env, device) {
-  if (!env.GAS_WEBAPP_URL) return;
-  try {
-    const res = await fetch(env.GAS_WEBAPP_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      redirect: "follow",
-      body: JSON.stringify({
-        secret: env.INTERNAL_SECRET,
-        email: device.email_phone,
-        serial: device.serial,
-        rom_version: device.rom_version,
-        country: device.country
-      })
-    });
-
-    const resText = await res.text();
-    let resJson = {};
-    try { resJson = JSON.parse(resText); } catch (e) { }
-
-    if (resJson.success || resText.includes("OK")) {
-      await env.DB.prepare("UPDATE licenses SET gmail_notify = 'OK' WHERE id = ?").bind(device.id).run();
-    } else {
-      await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(device.id).run();
-    }
-  } catch (err) {
-    await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(device.id).run();
-  }
-}
-
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: { "Content-Type": "application/json;charset=utf-8", "Access-Control-Allow-Origin": "*" }
   });
 }
-
-
