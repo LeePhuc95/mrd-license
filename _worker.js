@@ -53,14 +53,16 @@ export default {
     // 1. API ADMIN
     // =========================================================================
     const adminPassword = env.ADMIN_PASSWORD;
-    const authHeader = request.headers.get("Authorization");
-    const isAuthed = authHeader === `Bearer ${adminPassword}`;
+    const authHeader = request.headers.get("Authorization") || "";
+    const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+    const isAuthed = (bearerToken === adminPassword) || (await verifySessionToken(bearerToken, adminPassword));
 
     if (url.pathname === "/api/admin/login" && request.method === "POST") {
       try {
         const { password } = await request.json();
         if (password === adminPassword) {
-          return jsonResponse({ success: true });
+          const sessionToken = await generateSessionToken(adminPassword);
+          return jsonResponse({ success: true, token: sessionToken });
         }
         return jsonResponse({ success: false, message: "Mật khẩu không chính xác!" }, 401);
       } catch (e) {
@@ -934,6 +936,49 @@ self.addEventListener('fetch', (e) => {
 };
 
 let schemaChecked = false;
+
+/**
+ * Tạo HMAC Session Token an toàn (hạn dùng 7 ngày) từ ADMIN_PASSWORD
+ * Không bao giờ lưu mật khẩu thực trên trình duyệt, chống đọc trộm
+ */
+async function generateSessionToken(secret) {
+  if (!secret) return "";
+  const ts = Date.now().toString();
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode("MRD_ADMIN_SESSION:" + ts));
+  const hexSig = Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, "0")).join("");
+  return `${ts}.${hexSig}`;
+}
+
+/**
+ * Xác thực HMAC Session Token
+ */
+async function verifySessionToken(token, secret, maxAgeMs = 7 * 24 * 60 * 60 * 1000) {
+  if (!token || !secret || typeof token !== "string" || !token.includes(".")) return false;
+  const [ts, hexSig] = token.split(".");
+  const timestamp = Number(ts);
+  if (!timestamp || isNaN(timestamp)) return false;
+  if (Date.now() - timestamp > maxAgeMs || timestamp > Date.now() + 60000) return false;
+
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const expectedSig = await crypto.subtle.sign("HMAC", key, enc.encode("MRD_ADMIN_SESSION:" + ts));
+  const expectedHex = Array.from(new Uint8Array(expectedSig)).map(b => b.toString(16).padStart(2, "0")).join("");
+  return hexSig === expectedHex;
+}
 
 /**
  * Cập nhật timestamp phiên bản cơ sở dữ liệu khi có thay đổi (dùng để đồng bộ đa thiết bị)
@@ -2089,6 +2134,13 @@ function renderAdminHTML() {
       <div id="authError" style="color: #ef4444; font-size: 13px; margin-top: 10px; display: none;"></div>
     </div>
   </div>
+  <script>
+    try {
+      if (sessionStorage.getItem("mrd_admin_session_token")) {
+        document.getElementById("authOverlay").style.display = "none";
+      }
+    } catch (_) {}
+  </script>
 
   <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleSidebar(false)"></div>
 
@@ -2691,6 +2743,9 @@ function renderAdminHTML() {
 
   <script>
     let currentAuthToken = "";
+    try {
+      currentAuthToken = sessionStorage.getItem("mrd_admin_session_token") || "";
+    } catch (_) {}
     let systemData = { licenses: [], rom_categories: [], gift_keys: [] };
     let currentSelectedItem = null;
 
@@ -2985,8 +3040,12 @@ function renderAdminHTML() {
         try { data = await res.json(); } catch(e) {}
 
         if (res.ok) {
-          currentAuthToken = pwd;
+          currentAuthToken = data.token || pwd;
+          try {
+            sessionStorage.setItem("mrd_admin_session_token", currentAuthToken);
+          } catch (_) {}
           document.getElementById("authOverlay").style.display = "none";
+          document.getElementById("authPasswordInput").value = "";
           await loadAllData();
         } else {
           errEl.innerText = data.message || "Mật khẩu không chính xác!";
@@ -3005,6 +3064,9 @@ function renderAdminHTML() {
 
     function logout() {
       currentAuthToken = "";
+      try {
+        sessionStorage.removeItem("mrd_admin_session_token");
+      } catch (_) {}
       document.getElementById("authPasswordInput").value = "";
       document.getElementById("authOverlay").style.display = "flex";
       if (window.innerWidth <= 768) toggleSidebar(false);
@@ -4728,6 +4790,9 @@ function renderAdminHTML() {
         if (sideBtn) sideBtn.style.display = 'flex';
         const topBtn = document.getElementById('btnInstallApp');
         if (topBtn) topBtn.style.display = 'inline-flex';
+      }
+      if (currentAuthToken) {
+        loadAllData();
       }
     });
 
