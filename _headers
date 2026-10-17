@@ -1,0 +1,31 @@
+/manifest.webmanifest
+  Content-Type: application/manifest+json; charset=utf-8
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/manifest.json
+  Content-Type: application/manifest+json; charset=utf-8
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/sw.js
+  Content-Type: application/javascript; charset=utf-8
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/icon-192.png
+  Content-Type: image/png
+  Cache-Control: no-cache, must-revalidate
+
+/icon-512.png
+  Content-Type: image/png
+  Cache-Control: no-cache, must-revalidate
+
+/icon.svg
+  Content-Type: image/svg+xml; charset=utf-8
+  Cache-Control: no-cache, must-revalidate
+
+/apple-touch-icon.png
+  Content-Type: image/png
+  Cache-Control: no-cache, must-revalidate
+
+/favicon.ico
+  Content-Type: image/x-icon
+  Cache-Control: no-cache, must-revalidate

@@ -796,15 +796,31 @@ export default {
     }
 
     // =========================================================================
-        // 4. GIAO DIỆN TĨNH & TÀI NGUYÊN CLOUDFLARE PAGES (ASSETS)
+    // 4. GIAO DIỆN TĨNH & TÀI NGUYÊN CLOUDFLARE PAGES (ASSETS)
     // =========================================================================
+    if (url.pathname === "/favicon.ico" || url.pathname === "/apple-touch-icon.png" || url.pathname === "/apple-touch-icon-precomposed.png") {
+      if (env.ASSETS) return env.ASSETS.fetch(new Request(new URL("/icon-192.png", request.url), request));
+    }
+
     if (url.pathname === "/admin" || url.pathname === "/admin/") {
       if (env.ASSETS) return env.ASSETS.fetch(new Request(new URL("/", request.url), request));
       return Response.redirect(new URL("/", request.url).toString(), 302);
     }
 
     if (env.ASSETS) {
-      return env.ASSETS.fetch(request);
+      const res = await env.ASSETS.fetch(request);
+      if (url.pathname === "/manifest.webmanifest" || url.pathname === "/manifest.json") {
+        const h = new Headers(res.headers);
+        h.set("Content-Type", "application/manifest+json; charset=utf-8");
+        h.set("Cache-Control", "no-cache, no-store, must-revalidate");
+        return new Response(res.body, { status: res.status, headers: h });
+      }
+      if (url.pathname.endsWith(".png") || url.pathname.endsWith(".svg")) {
+        const h = new Headers(res.headers);
+        h.set("Cache-Control", "no-cache, must-revalidate");
+        return new Response(res.body, { status: res.status, headers: h });
+      }
+      return res;
     }
 
     return new Response("Not Found", { status: 404 });
