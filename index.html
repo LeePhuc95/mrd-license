@@ -278,7 +278,7 @@
       font-size: 13px;
       font-weight: 600;
       cursor: pointer;
-      text-align: left;
+      text-align: center;
       padding: 6px 8px;
       border-radius: 6px;
       transition: background 0.15s;
@@ -1739,8 +1739,9 @@
 
       <button class="btn-pwa-install" id="sidebarInstallBtn" onclick="installPWA()" style="display: none;">
         <span>📲</span>
-        <span>Cài đặt App về máy</span>
+        <span>Cài đặt Web App</span>
       </button>
+
       <button class="btn-logout" onclick="logout()">🔒 Khóa màn hình</button>
     </div>
   </div>
@@ -1773,11 +1774,11 @@
         <div style="font-size: 17px; font-weight: bold;" id="topbarTitle">Quản lý Kích hoạt</div>
       </div>
       <div class="topbar-right" style="display: flex; align-items: center; gap: 8px;">
-        <button class="theme-toggle-btn" id="btnInstallApp" onclick="installPWA()"
+        <!--<button class="theme-toggle-btn" id="btnInstallApp" onclick="installPWA()"
           title="Cài đặt App về máy để mở trực tiếp không cần trình duyệt" style="display: none;">
           <span>📲</span>
           <span id="installAppText">Cài đặt App</span>
-        </button>
+        </button>-->
         <button class="theme-toggle-btn" id="btnSyncData" onclick="manualSyncData()"
           title="Đồng bộ dữ liệu mới nhất từ máy chủ">
           <span id="syncDataIcon" class="sync-icon">🔄</span>
@@ -2403,9 +2404,9 @@
     function normalizeDateStr(val) {
       if (!val) return "";
       let s = String(val).trim();
-      s = s.replace(/[\\u200B-\\u200F\\u202A-\\u202E\\u2060\\uFEFF]/g, "");
-      s = s.replace(/[\\u2010-\\u2015\\u2212\\uFF0D\/.]/g, "-");
-      s = s.replace(/[ \t]*-+[ \t]*/g, "-").trim();
+      s = s.replace(/[\u200B-\u200F\u202A-\u202E\u2060\uFEFF]/g, "");
+      s = s.replace(/[\u2010-\u2015\u2212\uFF0D\/.]/g, "-");
+      s = s.replace(/\s*-\s*/g, "-").trim();
 
       const dmy = s.match(/^([0-9]{1,2})-([0-9]{1,2})-([0-9]{4})$/);
       if (dmy) {
