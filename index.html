@@ -2022,6 +2022,7 @@
                 <th style="width: 180px;">GIFT CODE</th>
                 <th style="width: 120px;">NGÀY TẠO</th>
                 <th style="width: 120px;">NGÀY HẾT HẠN</th>
+                <th style="width: 110px;">GIA HẠN</th>
                 <th style="width: 110px;">TRẠNG THÁI KEY</th>
                 <th class="col-note">GHI CHÚ</th>
                 <th class="col-actions">HÀNH ĐỘNG</th>
@@ -2029,7 +2030,7 @@
             </thead>
             <tbody id="giftTableBody">
               <tr>
-                <td colspan="8" style="text-align: center; color: var(--text-muted);">Đang tải dữ liệu Gift Code...</td>
+                <td colspan="9" style="text-align: center; color: var(--text-muted);">Đang tải dữ liệu Gift Code...</td>
               </tr>
             </tbody>
           </table>
@@ -2136,6 +2137,7 @@
                 <th>GIFT CODE (*)</th>
                 <th>NGÀY TẠO (YYYY-MM-DD) (*)</th>
                 <th>NGÀY HẾT HẠN (YYYY-MM-DD) (*)</th>
+                <th style="width: 100px;">GIA HẠN (*)</th>
                 <th class="col-note">GHI CHÚ</th>
               </tr>
             </thead>
@@ -2289,6 +2291,11 @@
           <input type="date" id="giftExpDatePicker" class="native-date-hidden"
             onchange="syncDatePickerToInput('giftExpDatePicker', 'giftExpDate')">
         </div>
+      </div>
+      <div class="form-group">
+        <label>GIA HẠN (SỐ NGÀY) (*)</label>
+        <input type="number" id="giftExtend" min="1" max="3650" value="7" placeholder="Số ngày kích hoạt (Mặc định: 7)"
+          style="font-weight: bold;">
       </div>
       <div class="form-group">
         <label>GHI CHÚ</label>
@@ -3213,7 +3220,7 @@
       const todayStr = new Date().toISOString().split("T")[0];
 
       if (pageItems.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 24px;">Không tìm thấy Gift Code nào. Bấm nút "+ Tạo Gift Code" ở trên để thêm.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--text-muted); padding: 24px;">Không tìm thấy Gift Code nào. Bấm nút "+ Tạo Gift Code" ở trên để thêm.</td></tr>';
       } else {
         tbody.innerHTML = pageItems.map(function (item, index) {
           const stt = start + index + 1;
@@ -3222,6 +3229,7 @@
           const statusBadge = isExpired
             ? '<span class="badge badge-BLOCK">BLOCK</span>'
             : '<span class="badge badge-OK">OK</span>';
+          const extendVal = item.extend != null ? item.extend : 7;
 
           return '<tr style="' + (isSelected ? 'background: var(--table-hover);' : '') + '">' +
             '<td class="col-cb" onclick="event.stopPropagation()">' +
@@ -3231,6 +3239,7 @@
             '<td><b><code>' + item.gift_code + '</code></b></td>' +
             '<td><code>' + item.start_date + '</code></td>' +
             '<td><code>' + item.expiration_date + '</code></td>' +
+            '<td><span class="badge badge-shard">' + extendVal + ' ngày</span></td>' +
             '<td>' + statusBadge + '</td>' +
             '<td class="col-note">' + (item.note || "-") + '</td>' +
             '<td class="col-actions">' +
@@ -3420,11 +3429,13 @@
       const itemsToEdit = systemData.gift_keys.filter(function (it) { return selectedGiftIds.has(it.id); });
       tbody.innerHTML = itemsToEdit.map(function (item, idx) {
         const stt = idx + 1;
+        const extendVal = item.extend != null ? item.extend : 7;
         return '<tr data-id="' + item.id + '">' +
           '<td style="text-align: center; font-weight: bold;">' + stt + '</td>' +
           '<td><input type="text" class="bulk-cell-input bulk-gift-code" value="' + (item.gift_code || "") + '" style="font-family: monospace; font-weight: bold; text-transform: uppercase;" oninput="sanitizeCodeInput(this)"></td>' +
           '<td><input type="text" class="bulk-cell-input bulk-gift-start" value="' + (normalizeDateStr(item.start_date) || "") + '" placeholder="YYYY-MM-DD" maxlength="15" style="text-align: center; font-family: monospace;" onblur="this.value = normalizeDateStr(this.value)"></td>' +
           '<td><input type="text" class="bulk-cell-input bulk-gift-exp" value="' + (normalizeDateStr(item.expiration_date) || "") + '" placeholder="YYYY-MM-DD" maxlength="15" style="text-align: center; font-family: monospace;" onblur="this.value = normalizeDateStr(this.value)"></td>' +
+          '<td><input type="number" min="1" max="3650" class="bulk-cell-input bulk-gift-extend" value="' + extendVal + '" style="text-align: center; font-weight: bold;"></td>' +
           '<td class="col-note"><input type="text" class="bulk-cell-input bulk-gift-note" value="' + (item.note || "") + '"></td>' +
           '</tr>';
       }).join("");
@@ -3448,6 +3459,7 @@
         const gift_code = sanitizeCode(row.querySelector(".bulk-gift-code").value);
         const start_date = normalizeDateStr(row.querySelector(".bulk-gift-start").value);
         const expiration_date = normalizeDateStr(row.querySelector(".bulk-gift-exp").value);
+        const extend = parseInt(row.querySelector(".bulk-gift-extend").value, 10) || 7;
         const note = row.querySelector(".bulk-gift-note").value.trim();
 
         // Ghi lại ngày chuẩn hóa vào ô input để người dùng thấy rõ
@@ -3462,7 +3474,7 @@
         }
         if (start_date > expiration_date) return showToast("Mục " + stt + ": Ngày bắt đầu không được lớn hơn ngày hết hạn!", "warn");
 
-        itemsToUpdate.push({ id: id, gift_code: gift_code, start_date: start_date, expiration_date: expiration_date, note: note });
+        itemsToUpdate.push({ id: id, gift_code: gift_code, start_date: start_date, expiration_date: expiration_date, extend: extend, note: note });
       }
 
       const saveBtn = document.getElementById("btnSaveBulkGifts");
@@ -3996,6 +4008,7 @@
       const expPicker = document.getElementById("giftExpDatePicker");
       if (expPicker) expPicker.value = expStr;
 
+      document.getElementById("giftExtend").value = 7;
       document.getElementById("giftNote").value = "";
       document.getElementById("giftModal").style.display = "flex";
     }
@@ -4014,6 +4027,7 @@
       document.getElementById("giftExpDate").value = eDate;
       const expPicker = document.getElementById("giftExpDatePicker");
       if (expPicker) expPicker.value = eDate;
+      document.getElementById("giftExtend").value = item.extend != null ? item.extend : 7;
       document.getElementById("giftNote").value = item.note || "";
       document.getElementById("giftModal").style.display = "flex";
     }
@@ -4041,6 +4055,7 @@
 
       let start_date = normalizeDateStr(rawStart) || normalizeDateStr(pickerStart);
       let expiration_date = normalizeDateStr(rawExp) || normalizeDateStr(pickerExp);
+      const extend = parseInt(document.getElementById("giftExtend").value, 10) || 7;
       const note = document.getElementById("giftNote").value.trim();
 
       // Cập nhật lại UI ô nhập và picker để hiển thị định dạng chuẩn YYYY-MM-DD
@@ -4070,7 +4085,7 @@
         const action = id ? "update_gift_key" : "create_gift_key";
         const loadingMsg = id ? "Đang cập nhật Gift Code..." : "Đang tạo Gift Code & đồng bộ file JSON...";
         const res = await sendAdminAction(
-          { action, id: id ? Number(id) : undefined, gift_code, start_date, expiration_date, note },
+          { action, id: id ? Number(id) : undefined, gift_code, start_date, expiration_date, extend, note },
           loadingMsg
         );
         if (res && res.success) {

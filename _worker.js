@@ -351,12 +351,18 @@ export default {
 
           // Thêm cả json/giftcode.json vào cùng 1 block commit duy nhất
           try {
+            const today = new Date().toISOString().split("T")[0];
+            const xorKey = env?.XOR_KEY;
             const giftRes = await env.DB.prepare(
-              "SELECT gift_code, start_date, expiration_date FROM gift_keys ORDER BY created_at DESC"
-            ).all();
+              "SELECT gift_code, start_date, expiration_date, extend FROM gift_keys WHERE expiration_date >= ? ORDER BY created_at DESC"
+            ).bind(today).all();
             const giftList = (giftRes?.results || []).map(r => {
-              const raw = `${r.gift_code}:${r.start_date}:${r.expiration_date}`;
-              return xorEncryptHex(raw, xorKey);
+              const extendVal = r.extend != null ? Number(r.extend) : 7;
+              const rawMeta = `${r.start_date}:${r.expiration_date}:${extendVal}`;
+              return {
+                gift_code: r.gift_code,
+                metadata: xorEncryptHex(rawMeta, xorKey)
+              };
             });
             filesToCommit.push({
               path: "json/giftcode.json",
@@ -378,10 +384,11 @@ export default {
           });
         }
         else if (action === "create_gift_key") {
-          let { start_date, expiration_date, note } = body;
+          let { start_date, expiration_date, note, extend } = body;
           const gift_code = sanitizeCode(body.gift_code);
           start_date = normalizeDateStr(start_date);
           expiration_date = normalizeDateStr(expiration_date);
+          const extendDays = Number(extend) > 0 ? Number(extend) : 7;
           if (!gift_code || !start_date || !expiration_date) {
             return jsonResponse({ success: false, error: "Thiếu thông tin GIFT_CODE hoặc ngày hiệu lực" }, 400);
           }
@@ -396,9 +403,9 @@ export default {
           }
 
           await env.DB.prepare(`
-          INSERT INTO gift_keys (gift_code, start_date, expiration_date, note, created_at)
-          VALUES (?, ?, ?, ?, ?)
-        `).bind(gift_code, start_date, expiration_date, note || '', Date.now()).run();
+          INSERT INTO gift_keys (gift_code, start_date, expiration_date, extend, note, created_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).bind(gift_code, start_date, expiration_date, extendDays, note || '', Date.now()).run();
 
           const gitRes = await syncGiftCodeToGitHub(env);
           if (!gitRes.success) {
@@ -414,10 +421,11 @@ export default {
           });
         }
         else if (action === "update_gift_key") {
-          let { id, start_date, expiration_date, note } = body;
+          let { id, start_date, expiration_date, note, extend } = body;
           const gift_code = sanitizeCode(body.gift_code);
           start_date = normalizeDateStr(start_date);
           expiration_date = normalizeDateStr(expiration_date);
+          const extendDays = Number(extend) > 0 ? Number(extend) : 7;
           if (!id || !gift_code || !start_date || !expiration_date) {
             return jsonResponse({ success: false, error: "Thiếu dữ liệu cập nhật Gift Code" }, 400);
           }
@@ -432,9 +440,9 @@ export default {
           }
 
           await env.DB.prepare(`
-          UPDATE gift_keys SET gift_code = ?, start_date = ?, expiration_date = ?, note = ?
+          UPDATE gift_keys SET gift_code = ?, start_date = ?, expiration_date = ?, extend = ?, note = ?
           WHERE id = ?
-        `).bind(gift_code, start_date, expiration_date, note || '', id).run();
+        `).bind(gift_code, start_date, expiration_date, extendDays, note || '', id).run();
 
           const gitRes = await syncGiftCodeToGitHub(env);
           if (!gitRes.success) {
@@ -694,10 +702,11 @@ export default {
             const eDate = normalizeDateStr(it.expiration_date);
             if (!it.id || !it.gift_code || !sDate || !eDate) continue;
             const cleanGift = sanitizeCode(it.gift_code);
+            const extendDays = Number(it.extend) > 0 ? Number(it.extend) : 7;
             stmts.push(
               env.DB.prepare(
-                `UPDATE gift_keys SET gift_code = ?, start_date = ?, expiration_date = ?, note = ? WHERE id = ?`
-              ).bind(cleanGift, sDate, eDate, (it.note || '').trim(), Number(it.id))
+                `UPDATE gift_keys SET gift_code = ?, start_date = ?, expiration_date = ?, extend = ?, note = ? WHERE id = ?`
+              ).bind(cleanGift, sDate, eDate, extendDays, (it.note || '').trim(), Number(it.id))
             );
           }
           await executeDbBatch(env.DB, stmts);
@@ -947,6 +956,7 @@ async function ensureDbSchema(env) {
         gift_code TEXT UNIQUE NOT NULL,
         start_date TEXT NOT NULL,
         expiration_date TEXT NOT NULL,
+        extend INTEGER DEFAULT 7,
         note TEXT,
         created_at INTEGER
       )
@@ -955,6 +965,7 @@ async function ensureDbSchema(env) {
   } catch (e) {
     // Bỏ qua lỗi tạo bảng gift_keys
   }
+  try { await env.DB.prepare("ALTER TABLE gift_keys ADD COLUMN extend INTEGER DEFAULT 7").run(); } catch (_) { }
 
   try {
     await env.DB.prepare(`
@@ -1178,13 +1189,21 @@ async function syncShardsBlockToGitHub(env, prefixes, customMessage) {
 async function syncGiftCodeToGitHub(env) {
   try {
     const today = new Date().toISOString().split("T")[0];
+    const xorKey = env?.XOR_KEY;
 
     // Lọc trực tiếp từ CSDL: chỉ lấy các gift code còn hạn dùng (>= ngày hôm nay)
     const { results } = await env.DB.prepare(
-      "SELECT gift_code, start_date, expiration_date FROM gift_keys WHERE expiration_date >= ? ORDER BY created_at DESC"
+      "SELECT gift_code, start_date, expiration_date, extend FROM gift_keys WHERE expiration_date >= ? ORDER BY created_at DESC"
     ).bind(today).all();
 
-    const records = results || [];
+    const records = (results || []).map(r => {
+      const extendVal = r.extend != null ? Number(r.extend) : 7;
+      const rawMeta = `${r.start_date}:${r.expiration_date}:${extendVal}`;
+      return {
+        gift_code: r.gift_code,
+        metadata: xorEncryptHex(rawMeta, xorKey)
+      };
+    });
 
     // Lưu Gift Code dạng JSON sạch không mã hóa, siêu nhẹ cho Android
     const fileContent = JSON.stringify(records, null, 2);
