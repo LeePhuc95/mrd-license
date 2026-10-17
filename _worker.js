@@ -2276,8 +2276,8 @@ function renderAdminHTML() {
       <div class="form-group">
         <label>QUỐC GIA</label>
         <select id="addCountry">
-          <option value="VN">VN (Gửi mail tiếng Việt)</option>
-          <option value="Other">Other (Gửi mail tiếng Anh)</option>
+          <option value="VN">VN</option>
+          <option value="OTHER">Other</option>
         </select>
       </div>
       <div class="form-group">
@@ -2378,7 +2378,7 @@ function renderAdminHTML() {
         <label>QUỐC GIA</label>
         <select id="editCountry" disabled>
           <option value="VN">VN</option>
-          <option value="Other">Other</option>
+          <option value="OTHER">Other</option>
         </select>
       </div>
       <div class="form-group">
@@ -3215,7 +3215,7 @@ function renderAdminHTML() {
           '<td><input type="text" class="bulk-cell-input bulk-email" value="' + (item.email_phone || "") + '"></td>' +
           '<td><select class="bulk-cell-select bulk-country">' +
             '<option value="VN"' + (item.country === 'VN' ? ' selected' : '') + '>VN</option>' +
-            '<option value="Other"' + (item.country === 'Other' ? ' selected' : '') + '>Other</option>' +
+            '<option value="OTHER"' + (item.country === 'OTHER' ? ' selected' : '') + '>Other</option>' +
           '</select></td>' +
           '<td><select class="bulk-cell-select bulk-gmail">' +
             '<option value="NONE"' + (item.gmail_notify === 'NONE' ? ' selected' : '') + '>NONE</option>' +
