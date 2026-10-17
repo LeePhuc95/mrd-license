@@ -1062,12 +1062,18 @@ async function commitFilesToGitHubBlock(env, filesArray, commitMessage) {
       const treeData = await treeRes.json();
       const newTreeSha = treeData.sha;
 
+      // Tự động gắn [skip ci] vào tất cả các commit dữ liệu để Cloudflare Pages KHÔNG kích hoạt build & deploy
+      let finalMessage = (commitMessage || `Sync ${filesArray.length} files via MRD License Admin`).trim();
+      if (!finalMessage.includes("[skip ci]") && !finalMessage.includes("[ci skip]")) {
+        finalMessage += " [skip ci]";
+      }
+
       // 3. Tạo Commit duy nhất đại diện cho toàn bộ block file
       const commitRes = await fetch(`https://api.github.com/repos/${cleanRepo}/git/commits`, {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: commitMessage || `Sync block ${filesArray.length} files via MRD License Admin [skip ci]`,
+          message: finalMessage,
           tree: newTreeSha,
           parents: [latestCommitSha]
         })
