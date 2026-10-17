@@ -11,9 +11,23 @@ export default {
     const today = new Date().toISOString().split("T")[0];
 
     // =========================================================================
-    // 0. BỘ ĐẾM TOÀN DIỆN MỌI REQUEST CỦA PROJECT LICENSE (CHẠY NỀN QUA ctx.waitUntil)
+    // 0. BỘ ĐẾM REQUEST LICENSE (CHẠY NỀN QUA ctx.waitUntil)
+    // Chỉ đếm các request API và trang quản trị thực tế
+    // BỎ QUA toàn bộ tài nguyên tĩnh (icon, manifest, sw.js, favicon) để không tốn quota
     // =========================================================================
-    if (env.DB) {
+    const isStaticAsset = (
+      url.pathname.endsWith(".png") ||
+      url.pathname.endsWith(".svg") ||
+      url.pathname.endsWith(".ico") ||
+      url.pathname.endsWith(".webmanifest") ||
+      (url.pathname.endsWith(".json") && !url.pathname.startsWith("/api/")) ||
+      url.pathname === "/sw.js" ||
+      url.pathname === "/favicon.ico" ||
+      url.pathname === "/apple-touch-icon.png" ||
+      url.pathname === "/apple-touch-icon-precomposed.png"
+    );
+
+    if (env.DB && !isStaticAsset) {
       ctx.waitUntil(
         env.DB.prepare(`
           INSERT INTO system_stats (date_key, service_type, req_count)
