@@ -938,6 +938,7 @@ async function ensureDbSchema(env) {
   try { await env.DB.prepare("ALTER TABLE licenses ADD COLUMN prefix TEXT").run(); } catch (_) { }
   try { await env.DB.prepare("ALTER TABLE licenses ADD COLUMN note TEXT").run(); } catch (_) { }
   try { await env.DB.prepare("ALTER TABLE licenses ADD COLUMN gmail_notify TEXT DEFAULT 'NONE'").run(); } catch (_) { }
+  try { await env.DB.prepare("ALTER TABLE licenses ADD COLUMN created_at INTEGER").run(); } catch (_) { }
 
   try {
     await env.DB.prepare(`

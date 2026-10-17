@@ -629,6 +629,13 @@
       border-color: var(--border-color);
     }
 
+    .badge-WAIT {
+      background: var(--badge-off-bg);
+      color: var(--badge-off-color);
+      border-color: var(--badge-off-border);
+      font-weight: 600;
+    }
+
     .badge-shard {
       background: var(--badge-shard-bg);
       color: var(--badge-shard-color);
@@ -3022,19 +3029,38 @@
             (() => {
               let notifyStatus = item.gmail_notify || "NONE";
               if (notifyStatus === "SENT") notifyStatus = "OK";
-              let mailBadgeHtml = '<span class="badge badge-' + notifyStatus + '">' + (notifyStatus === "SENDING" ? "Đang gửi..." : notifyStatus) + '</span>';
-              if (systemData.auto_send_email && (notifyStatus === "NONE" || notifyStatus === "SENDING")) {
-                const hasEmail = item.email_phone && item.email_phone.includes("@");
-                const isSerialOk = item.serial && item.serial.trim() !== "";
-                const isRomOk = item.rom_version && item.rom_version.trim() !== "";
-                const isKeyOk = item.key_status === "OK";
-                if (hasEmail && isSerialOk && isRomOk && isKeyOk && item.created_at) {
-                  const targetTime = Number(item.created_at) + 60000;
-                  const remainingSec = Math.ceil((targetTime - Date.now()) / 1000);
-                  if (remainingSec > 0 && remainingSec <= 60) {
-                    mailBadgeHtml = '<span class="badge badge-COUNTDOWN" data-id="' + item.id + '" data-target-time="' + targetTime + '">' + remainingSec + 's</span>';
-                  } else if (remainingSec <= 0) {
-                    mailBadgeHtml = '<span class="badge badge-off">Đang gửi...</span>';
+
+              const hasEmail = item.email_phone && item.email_phone.includes("@");
+              const isSerialOk = item.serial && item.serial.trim() !== "";
+              const isRomOk = item.rom_version && item.rom_version.trim() !== "";
+              const isKeyOk = item.key_status === "OK";
+
+              let mailBadgeHtml = '';
+
+              if (notifyStatus === "OK") {
+                mailBadgeHtml = '<span class="badge badge-OK">OK</span>';
+              } else if (notifyStatus === "ERROR") {
+                mailBadgeHtml = '<span class="badge badge-ERROR">ERROR</span>';
+              } else if (notifyStatus === "SENDING") {
+                mailBadgeHtml = '<span class="badge badge-off">Đang gửi...</span>';
+              } else {
+                // notifyStatus là NONE hoặc chưa gửi
+                if (!hasEmail || !isKeyOk) {
+                  mailBadgeHtml = '<span class="badge badge-NONE">NONE</span>';
+                } else {
+                  let isCountingDown = false;
+                  if (systemData.auto_send_email && isSerialOk && isRomOk && item.created_at) {
+                    const targetTime = Number(item.created_at) + 60000;
+                    const remainingSec = Math.ceil((targetTime - Date.now()) / 1000);
+                    if (remainingSec > 0 && remainingSec <= 65) {
+                      isCountingDown = true;
+                      mailBadgeHtml = '<span class="badge badge-COUNTDOWN" data-id="' + item.id + '" data-target-time="' + targetTime + '">' + remainingSec + 's</span>';
+                    }
+                  }
+
+                  if (!isCountingDown) {
+                    // Chưa gửi tự động (đã quá hạn 60s, tạo trước khi bật tự động, hoặc tắt tự động) -> hiển thị WAIT để gửi thủ công
+                    mailBadgeHtml = '<span class="badge badge-WAIT" title="Chưa gửi email - Bấm vào dòng để gửi thủ công">WAIT</span>';
                   }
                 }
               }
@@ -3869,15 +3895,15 @@
             badge.removeAttribute("data-target-time");
             const id = Number(badge.getAttribute("data-id"));
 
-            // Đổi trạng thái sang "Chờ gửi..." trên tất cả các máy
-            badge.className = "badge badge-off";
-            badge.innerText = "Chờ gửi...";
-
-            // TỐI ƯU REQUEST: Chỉ máy trực tiếp bấm nút tạo mới mới gửi API
-            // Các máy 2, 3, 4,... khác sau khi đếm xong CHỈ chuyển sang "Chờ gửi...", không gửi request
             if (isMyCreatedLicense(id)) {
               unmarkMyCreatedLicense(id);
+              badge.className = "badge badge-off";
+              badge.innerText = "Đang gửi...";
               triggerAutoSendEmail(id, badge);
+            } else {
+              badge.className = "badge badge-WAIT";
+              badge.innerText = "WAIT";
+              badge.title = "Chưa gửi email - Bấm vào dòng để gửi thủ công";
             }
           }
         });
@@ -3891,6 +3917,10 @@
           const finalStatus = (res.gmail_notify && res.gmail_notify !== "SENDING") ? (res.gmail_notify === "SENT" ? "OK" : res.gmail_notify) : "OK";
           const found = (systemData.licenses || []).find(l => l.id === id);
           if (found) found.gmail_notify = finalStatus;
+          if (badgeEl) {
+            badgeEl.className = "badge badge-" + finalStatus;
+            badgeEl.innerText = finalStatus;
+          }
           if (currentSelectedItem && currentSelectedItem.id === id) {
             currentSelectedItem.gmail_notify = finalStatus;
             const sendBtn = document.getElementById("btnSendMail");
