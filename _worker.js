@@ -137,7 +137,11 @@ export default {
       }
 
       if (action === "create_license") {
-        const { serial, rom_version, key_status, email_phone, country, note } = body;
+        const { rom_version, key_status, email_phone, country, note } = body;
+        const serial = sanitizeCode(body.serial);
+        if (!serial) {
+          return jsonResponse({ success: false, error: "Serial không hợp lệ" }, 400);
+        }
 
         const existing = await env.DB.prepare(
           "SELECT id FROM licenses WHERE serial = ? AND rom_version = ?"
@@ -239,7 +243,11 @@ export default {
         return jsonResponse({ success: true, message: msg, prefix, id: newId });
       }
       else if (action === "update_license") {
-        const { id, serial, rom_version, key_status, email_phone, country, note } = body;
+        const { id, rom_version, key_status, email_phone, country, note } = body;
+        const serial = sanitizeCode(body.serial);
+        if (!serial) {
+          return jsonResponse({ success: false, error: "Serial không hợp lệ" }, 400);
+        }
 
         const duplicate = await env.DB.prepare(
           "SELECT id FROM licenses WHERE serial = ? AND rom_version = ? AND id != ?"
@@ -326,7 +334,8 @@ export default {
         return jsonResponse({ success: true, count, message: `Đã đồng bộ ${count} bản ghi D1.${gitStatus}` });
       }
       else if (action === "create_gift_key") {
-        const { gift_code, start_date, expiration_date, note } = body;
+        const { start_date, expiration_date, note } = body;
+        const gift_code = sanitizeCode(body.gift_code);
         if (!gift_code || !start_date || !expiration_date) {
           return jsonResponse({ success: false, error: "Thiếu thông tin GIFT_CODE hoặc ngày hiệu lực" }, 400);
         }
@@ -334,7 +343,7 @@ export default {
         await ensureDbSchema(env);
         const existing = await env.DB.prepare(
           "SELECT id FROM gift_keys WHERE gift_code = ?"
-        ).bind(gift_code.trim()).first();
+        ).bind(gift_code).first();
 
         if (existing) {
           return jsonResponse({ success: false, error: `Gift code "${gift_code}" đã tồn tại trong hệ thống!` }, 400);
@@ -343,7 +352,7 @@ export default {
         await env.DB.prepare(`
           INSERT INTO gift_keys (gift_code, start_date, expiration_date, note, created_at)
           VALUES (?, ?, ?, ?, ?)
-        `).bind(gift_code.trim(), start_date.trim(), expiration_date.trim(), note || '', Date.now()).run();
+        `).bind(gift_code, start_date.trim(), expiration_date.trim(), note || '', Date.now()).run();
 
         const gitRes = await syncGiftCodeToGitHub(env);
         let msg = "Đã tạo Gift Code thành công!";
@@ -356,7 +365,8 @@ export default {
         return jsonResponse({ success: true, message: msg });
       }
       else if (action === "update_gift_key") {
-        const { id, gift_code, start_date, expiration_date, note } = body;
+        const { id, start_date, expiration_date, note } = body;
+        const gift_code = sanitizeCode(body.gift_code);
         if (!id || !gift_code || !start_date || !expiration_date) {
           return jsonResponse({ success: false, error: "Thiếu dữ liệu cập nhật Gift Code" }, 400);
         }
@@ -364,7 +374,7 @@ export default {
         await ensureDbSchema(env);
         const duplicate = await env.DB.prepare(
           "SELECT id FROM gift_keys WHERE gift_code = ? AND id != ?"
-        ).bind(gift_code.trim(), id).first();
+        ).bind(gift_code, id).first();
 
         if (duplicate) {
           return jsonResponse({ success: false, error: `Gift code "${gift_code}" đã thuộc về mục khác!` }, 400);
@@ -373,7 +383,7 @@ export default {
         await env.DB.prepare(`
           UPDATE gift_keys SET gift_code = ?, start_date = ?, expiration_date = ?, note = ?
           WHERE id = ?
-        `).bind(gift_code.trim(), start_date.trim(), expiration_date.trim(), note || '', id).run();
+        `).bind(gift_code, start_date.trim(), expiration_date.trim(), note || '', id).run();
 
         const gitRes = await syncGiftCodeToGitHub(env);
         let msg = "Đã cập nhật Gift Code thành công!";
@@ -443,7 +453,8 @@ export default {
 
         for (const it of items) {
           if (!it.id || !it.serial || !it.rom_version) continue;
-          const newPrefix = getDevicePrefix(it.serial);
+          const cleanSerial = sanitizeCode(it.serial);
+          const newPrefix = getDevicePrefix(cleanSerial);
           affectedPrefixes.add(newPrefix);
           if (it.old_prefix) affectedPrefixes.add(it.old_prefix);
 
@@ -451,7 +462,7 @@ export default {
             env.DB.prepare(
               `UPDATE licenses SET serial = ?, rom_version = ?, key_status = ?, email_phone = ?, country = ?, gmail_notify = ?, note = ?, prefix = ? WHERE id = ?`
             ).bind(
-              it.serial.trim(),
+              cleanSerial,
               it.rom_version.trim(),
               it.key_status || 'OK',
               it.email_phone || '',
@@ -562,10 +573,11 @@ export default {
         const stmts = [];
         for (const it of items) {
           if (!it.id || !it.gift_code || !it.start_date || !it.expiration_date) continue;
+          const cleanGift = sanitizeCode(it.gift_code);
           stmts.push(
             env.DB.prepare(
               `UPDATE gift_keys SET gift_code = ?, start_date = ?, expiration_date = ?, note = ? WHERE id = ?`
-            ).bind(it.gift_code.trim(), it.start_date.trim(), it.expiration_date.trim(), it.note || '', it.id)
+            ).bind(cleanGift, it.start_date.trim(), it.expiration_date.trim(), it.note || '', it.id)
           );
         }
         if (stmts.length > 0) {
@@ -1065,12 +1077,26 @@ async function syncShardToGitHub(env, prefix) {
 }
 
 /**
+ * Chuyển đổi chuỗi có dấu thành không dấu, loại bỏ khoảng trắng và ký tự đặc biệt, viết hoa
+ */
+function sanitizeCode(str) {
+  if (!str) return "";
+  return String(str)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[đ]/g, "d")
+    .replace(/[Đ]/g, "D")
+    .replace(/[^a-zA-Z0-9_\-]/g, "")
+    .toUpperCase();
+}
+
+/**
  * Thuật toán phân mảnh theo 2 ký tự đầu của Serial:
  * PREFIX=$(echo "$SERI" | cut -c 1-2 | tr '[:upper:]' '[:lower:]')
  */
 function getDevicePrefix(serial) {
   if (!serial) return "un";
-  const clean = String(serial).trim().replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
+  const clean = sanitizeCode(serial).toLowerCase();
   return clean.length >= 2 ? clean.substring(0, 2) : clean.padEnd(2, "0");
 }
 
@@ -2269,7 +2295,7 @@ function renderAdminHTML() {
       
       <div class="form-group">
         <label>SERIAL (*)</label>
-        <input type="text" id="addSerial" placeholder="Ví dụ: G6AY8400E7W">
+        <input type="text" id="addSerial" placeholder="Ví dụ: G6AY8400E7W" oninput="sanitizeCodeInput(this)" style="text-transform: uppercase;">
       </div>
       <div class="form-group">
         <label>SẢN PHẨM (*)</label>
@@ -2317,7 +2343,7 @@ function renderAdminHTML() {
       <div class="form-group">
         <label>GIFT CODE (*)</label>
         <div style="display: flex; gap: 8px;">
-          <input type="text" id="giftCodeInput" placeholder="Ví dụ: VIP2026XYZ" style="flex: 1;">
+          <input type="text" id="giftCodeInput" placeholder="Ví dụ: VIP2026XYZ" style="flex: 1; text-transform: uppercase;" oninput="sanitizeCodeInput(this)">
           <button type="button" class="btn btn-gray" style="white-space: nowrap; font-size: 12px; padding: 0 10px;" onclick="generateRandomGiftCode()">🎲 Tạo mã</button>
         </div>
       </div>
@@ -2370,7 +2396,7 @@ function renderAdminHTML() {
       </div>
       <div class="form-group">
         <label>SERIAL</label>
-        <input type="text" id="editSerial" disabled>
+        <input type="text" id="editSerial" disabled oninput="sanitizeCodeInput(this)" style="text-transform: uppercase;">
       </div>
       <div class="form-group">
         <label>SẢN PHẨM</label>
@@ -2416,6 +2442,34 @@ function renderAdminHTML() {
     let currentAuthToken = "";
     let systemData = { licenses: [], rom_categories: [], gift_keys: [] };
     let currentSelectedItem = null;
+
+    // Chuẩn hóa và chặn gõ dấu tiếng Việt / khoảng trắng cho Serial và GiftCode
+    function sanitizeCode(str) {
+      if (!str) return "";
+      return String(str)
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[đ]/g, "d")
+        .replace(/[Đ]/g, "D")
+        .replace(/[^a-zA-Z0-9_\-]/g, "")
+        .toUpperCase();
+    }
+
+    function sanitizeCodeInput(el) {
+      if (!el || typeof el.value !== "string") return;
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      const orig = el.value;
+      const clean = sanitizeCode(orig);
+      if (orig !== clean) {
+        el.value = clean;
+        if (start !== null && end !== null) {
+          const diff = orig.length - clean.length;
+          const newPos = Math.max(0, start - diff);
+          el.setSelectionRange(newPos, newPos);
+        }
+      }
+    }
 
     // Phân trang & Tìm kiếm & Bulk Selection & Excel State
     const PAGE_SIZE = 10;
@@ -3220,7 +3274,7 @@ function renderAdminHTML() {
         const stt = idx + 1;
         return '<tr data-id="' + item.id + '" data-prefix="' + (item.prefix || "") + '">' +
           '<td style="text-align: center; font-weight: bold;">' + stt + '</td>' +
-          '<td><input type="text" class="bulk-cell-input bulk-serial" value="' + (item.serial || "") + '" style="font-family: monospace; font-weight: bold;"></td>' +
+          '<td><input type="text" class="bulk-cell-input bulk-serial" value="' + (item.serial || "") + '" style="font-family: monospace; font-weight: bold; text-transform: uppercase;" oninput="sanitizeCodeInput(this)"></td>' +
           '<td><select class="bulk-cell-select bulk-rom" data-selected="' + (item.rom_version || "") + '">' + romOptionsHtml + '</select></td>' +
           '<td><select class="bulk-cell-select bulk-status">' +
             '<option value="OK"' + (item.key_status === 'OK' ? ' selected' : '') + '>OK</option>' +
@@ -3260,7 +3314,7 @@ function renderAdminHTML() {
       for (const row of rows) {
         const id = Number(row.getAttribute("data-id"));
         const old_prefix = row.getAttribute("data-prefix") || "";
-        const serial = row.querySelector(".bulk-serial").value.trim();
+        const serial = sanitizeCode(row.querySelector(".bulk-serial").value);
         const rom_version = row.querySelector(".bulk-rom").value;
         const key_status = row.querySelector(".bulk-status").value;
         const email_phone = row.querySelector(".bulk-email").value.trim();
@@ -3354,7 +3408,7 @@ function renderAdminHTML() {
         const stt = idx + 1;
         return '<tr data-id="' + item.id + '">' +
           '<td style="text-align: center; font-weight: bold;">' + stt + '</td>' +
-          '<td><input type="text" class="bulk-cell-input bulk-gift-code" value="' + (item.gift_code || "") + '" style="font-family: monospace; font-weight: bold; text-transform: uppercase;"></td>' +
+          '<td><input type="text" class="bulk-cell-input bulk-gift-code" value="' + (item.gift_code || "") + '" style="font-family: monospace; font-weight: bold; text-transform: uppercase;" oninput="sanitizeCodeInput(this)"></td>' +
           '<td><input type="text" class="bulk-cell-input bulk-gift-start" value="' + (item.start_date || "") + '" placeholder="YYYY-MM-DD" maxlength="10" style="text-align: center; font-family: monospace;"></td>' +
           '<td><input type="text" class="bulk-cell-input bulk-gift-exp" value="' + (item.expiration_date || "") + '" placeholder="YYYY-MM-DD" maxlength="10" style="text-align: center; font-family: monospace;"></td>' +
           '<td class="col-note"><input type="text" class="bulk-cell-input bulk-gift-note" value="' + (item.note || "") + '"></td>' +
@@ -3375,7 +3429,7 @@ function renderAdminHTML() {
 
       for (const row of rows) {
         const id = Number(row.getAttribute("data-id"));
-        const gift_code = row.querySelector(".bulk-gift-code").value.trim().toUpperCase();
+        const gift_code = sanitizeCode(row.querySelector(".bulk-gift-code").value);
         const start_date = row.querySelector(".bulk-gift-start").value.trim();
         const expiration_date = row.querySelector(".bulk-gift-exp").value.trim();
         const note = row.querySelector(".bulk-gift-note").value.trim();
@@ -3517,11 +3571,11 @@ function renderAdminHTML() {
 
           if (serial && rom) {
             validItems.push({
-              serial: serial,
+              serial: sanitizeCode(serial),
               rom_version: rom,
               key_status: status.toUpperCase() === "DEL" ? "DEL" : "OK",
               email_phone: email,
-              country: country.toUpperCase() === "OTHER" ? "Other" : "VN",
+              country: country.toUpperCase() === "OTHER" ? "OTHER" : "VN",
               gmail_notify: (gmail.toUpperCase() === "SENT" || gmail.toUpperCase() === "OK") ? "OK" : "NONE",
               note: note
             });
@@ -3888,7 +3942,7 @@ function renderAdminHTML() {
 
     async function handleSaveGiftKey() {
       const id = document.getElementById("giftId").value;
-      const gift_code = document.getElementById("giftCodeInput").value.trim().toUpperCase();
+      const gift_code = sanitizeCode(document.getElementById("giftCodeInput").value);
       const start_date = document.getElementById("giftStartDate").value.trim();
       const expiration_date = document.getElementById("giftExpDate").value.trim();
       const note = document.getElementById("giftNote").value.trim();
@@ -4021,7 +4075,7 @@ function renderAdminHTML() {
         const payload = {
           action: "update_license",
           id: parseInt(document.getElementById("editId").value),
-          serial: document.getElementById("editSerial").value.trim(),
+          serial: sanitizeCode(document.getElementById("editSerial").value),
           rom_version: document.getElementById("editRomSelect").value,
           key_status: document.getElementById("editStatus").value,
           email_phone: document.getElementById("editEmail").value.trim(),
@@ -4079,7 +4133,7 @@ function renderAdminHTML() {
     }
 
     async function handleCreateLicense() {
-      const serial = document.getElementById("addSerial").value.trim();
+      const serial = sanitizeCode(document.getElementById("addSerial").value);
       const rom_version = document.getElementById("addRomSelect").value;
       if (!serial) return showToast("Vui lòng nhập SERIAL!", "warn");
 
