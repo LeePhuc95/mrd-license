@@ -3770,12 +3770,12 @@
           res = await sendAdminAction({
             action: "bulk_import_licenses",
             items: parsedImportData
-          }, "Đang nhập dữ liệu & đồng bộ block Shards lên GitHub...");
+          }, "Đang nhập dữ liệu & đồng bộ Shards lên GitHub...");
 
           if (res && res.success) {
             closeUploadModal();
             await loadAllData();
-            showToast(res.message || "Đã nhập và đồng bộ block Shards thành công!", "success", 7000);
+            showToast(res.message || "Đã nhập và đồng bộ Shards thành công!", "success", 7000);
             return;
           } else {
             showToast("Lỗi nhập dữ liệu: " + ((res && res.error) || "Không rõ"), "error", 10000);
@@ -4281,14 +4281,14 @@
     async function handleSyncAllPrefixes() {
       const confirmed = await showConfirm(
         "Đồng bộ Shards tĩnh",
-        "Hệ thống sẽ gom toàn bộ các file Shard và Gift Code trong CSDL D1 thành 1 block và đồng bộ 1 lần duy nhất lên GitHub. Bạn có muốn tiếp tục?",
+        "Hệ thống sẽ gom toàn bộ các file Shard và Gift Code trong CSDL D1 thành 1 khối và đồng bộ 1 lần duy nhất lên GitHub. Bạn có muốn tiếp tục?",
         false
       );
       if (!confirmed) return;
       const btn = document.getElementById("btnSyncShards");
       setBtnLoading(btn, true, "Đang đồng bộ...");
       try {
-        const res = await sendAdminAction({ action: "reindex_all_prefixes" }, "Đang đóng gói block & đồng bộ toàn bộ Shards lên GitHub...");
+        const res = await sendAdminAction({ action: "reindex_all_prefixes" }, "Đang đóng gói & đồng bộ toàn bộ Shards lên GitHub...");
         if (res && res.success) {
           showToast(res.message || "Đã đồng bộ thành công toàn bộ Shards lên GitHub!", "success", 7000);
           await loadAllData();

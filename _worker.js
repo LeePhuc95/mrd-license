@@ -374,7 +374,7 @@ export default {
             success: true,
             totalFiles: filesToCommit.length,
             totalLicenses: records.length,
-            message: `Đã đóng gói và đồng bộ thành công block ${filesToCommit.length} file lên GitHub!`
+            message: `Đã đóng gói và đồng bộ thành công ${filesToCommit.length} file lên GitHub!`
           });
         }
         else if (action === "create_gift_key") {
@@ -531,7 +531,7 @@ export default {
           return jsonResponse({
             success: true,
             count: ids.length,
-            message: `Đã xóa thành công ${ids.length} mục và cập nhật block ${delPrefixesList.length} shard lên GitHub!`
+            message: `Đã xóa thành công ${ids.length} mục và cập nhật ${delPrefixesList.length} shard lên GitHub!`
           });
         }
         else if (action === "bulk_update_licenses") {
@@ -584,7 +584,7 @@ export default {
           return jsonResponse({
             success: true,
             count: stmts.length,
-            message: `Đã cập nhật thành công ${stmts.length} mục và đồng bộ block ${updatePrefixesList.length} shard lên GitHub!`
+            message: `Đã cập nhật thành công ${stmts.length} mục và đồng bộ ${updatePrefixesList.length} shard lên GitHub!`
           });
         }
         else if (action === "bulk_import_licenses") {
@@ -656,7 +656,7 @@ export default {
             imported: stmts.length,
             skipped,
             shardsCount: prefixesToSync.length,
-            message: `Đã nhập thành công ${stmts.length} mục và đồng bộ block ${prefixesToSync.length} shard lên GitHub!`
+            message: `Đã nhập thành công ${stmts.length} mục và đồng bộ ${prefixesToSync.length} shard lên GitHub!`
           });
         }
         else if (action === "bulk_delete_gift_keys") {
@@ -1090,11 +1090,11 @@ async function commitFilesToGitHubBlock(env, filesArray, commitMessage) {
         count: filesArray.length,
         commitSha: newCommitSha,
         attempt,
-        message: `Đã đồng bộ thành công block ${filesArray.length} file lên GitHub (Commit: ${newCommitSha.substring(0, 7)})!`
+        message: `Đã đồng bộ thành công ${filesArray.length} file lên GitHub (Commit: ${newCommitSha.substring(0, 7)})!`
       };
     } catch (err) {
       lastError = err.message;
-      console.warn(`Lần thử ${attempt}/${MAX_ATTEMPTS} đồng bộ block GitHub thất bại:`, lastError);
+      console.warn(`Lần thử ${attempt}/${MAX_ATTEMPTS} đồng bộ GitHub thất bại:`, lastError);
 
       if (attempt < MAX_ATTEMPTS) {
         // Đợi 1.5s trước khi thử lại
