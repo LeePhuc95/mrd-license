@@ -1746,10 +1746,18 @@ function renderAdminHTML() {
     /* UPLOAD MODAL */
     .upload-dropzone {
       border: 2px dashed var(--border-color); border-radius: 10px; padding: 24px;
-      text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s;
+      text-align: center; cursor: pointer; transition: border-color 0.2s, background 0.2s, transform 0.2s;
       background: var(--table-hover); margin-bottom: 14px;
     }
     .upload-dropzone:hover { border-color: #0284c7; }
+    .upload-dropzone.drag-over {
+      border-color: #0284c7 !important;
+      background: rgba(2, 132, 199, 0.12) !important;
+      transform: scale(1.01);
+    }
+    .upload-dropzone * {
+      pointer-events: none;
+    }
     .preview-table-container {
       max-height: 220px; overflow: auto; border: 1px solid var(--border-color); border-radius: 6px; margin-top: 10px;
     }
@@ -2292,7 +2300,12 @@ function renderAdminHTML() {
         Chọn file Excel (.xlsx, .xls) hoặc .csv để nhập danh sách vào hệ thống.
       </div>
 
-      <div class="upload-dropzone" onclick="document.getElementById('excelFileInput').click()">
+      <div class="upload-dropzone" id="uploadDropzone"
+           onclick="document.getElementById('excelFileInput').click()"
+           ondragover="handleDropzoneDragOver(event)"
+           ondragenter="handleDropzoneDragOver(event)"
+           ondragleave="handleDropzoneDragLeave(event)"
+           ondrop="handleDropzoneDrop(event)">
         <input type="file" id="excelFileInput" accept=".xlsx,.xls,.csv" style="display: none;" onchange="handleExcelFileSelected(event)">
         <div style="font-size: 32px; margin-bottom: 8px;">📊</div>
         <div style="font-weight: 600; font-size: 14px; margin-bottom: 4px;" id="uploadFileNameText">Nhấp để chọn tệp Excel hoặc kéo thả vào đây</div>
@@ -3568,6 +3581,9 @@ function renderAdminHTML() {
       confirmBtn.disabled = true;
       confirmBtn.innerText = "Nhập dữ liệu"; 
 
+      const dropzone = document.getElementById("uploadDropzone");
+      if (dropzone) dropzone.classList.remove("drag-over");
+
       previewTable.querySelector("thead").innerHTML = "";
       previewTable.querySelector("tbody").innerHTML = '<tr><td style="text-align: center; color: var(--text-muted); padding: 16px;">Chưa chọn tệp tin nào.</td></tr>';
 
@@ -3576,12 +3592,53 @@ function renderAdminHTML() {
 
     function closeUploadModal() {
       document.getElementById("uploadExcelModal").style.display = "none";
+      const dropzone = document.getElementById("uploadDropzone");
+      if (dropzone) dropzone.classList.remove("drag-over");
       parsedImportData = [];
+    }
+
+    function handleDropzoneDragOver(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+      const dropzone = document.getElementById("uploadDropzone");
+      if (dropzone) dropzone.classList.add("drag-over");
+    }
+
+    function handleDropzoneDragLeave(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      const dropzone = document.getElementById("uploadDropzone");
+      if (dropzone) dropzone.classList.remove("drag-over");
+    }
+
+    function handleDropzoneDrop(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      const dropzone = document.getElementById("uploadDropzone");
+      if (dropzone) dropzone.classList.remove("drag-over");
+
+      const dt = e.dataTransfer;
+      const file = dt && dt.files && dt.files[0];
+      if (file) {
+        parseExcelFile(file);
+      }
     }
 
     function handleExcelFileSelected(event) {
       const file = event.target.files && event.target.files[0];
+      if (file) parseExcelFile(file);
+    }
+
+    function parseExcelFile(file) {
       if (!file) return;
+
+      const validExtensions = [".xlsx", ".xls", ".csv"];
+      const lowerName = file.name.toLowerCase();
+      const isValid = validExtensions.some(function(ext) { return lowerName.endsWith(ext); });
+      if (!isValid) {
+        return showToast("Định dạng tệp không được hỗ trợ! Vui lòng chọn tệp .xlsx, .xls hoặc .csv", "warn");
+      }
 
       document.getElementById("uploadFileNameText").innerText = "📄 " + file.name + " (" + (file.size / 1024).toFixed(1) + " KB)";
 
