@@ -1,6 +1,6 @@
 /**
  * Cloudflare Worker: Hệ Thống Bản Quyền MRD Team
- * - Thống kê toàn diện mọi lượt đọc/ghi/truy cập của License (Trần: 50.000 req)
+ * - Thống kê toàn diện mọi lượt đọc/ghi/truy cập của License (Trần: 10.000 req)
  * - Widget hiển thị số req License đã dùng và số lượng còn lại
  * - Phân mảnh tĩnh theo tiền tố (Prefix Chunking/Sharding): /{prefix}.json
  *   Mã hóa XOR
@@ -179,9 +179,20 @@ export default {
               try {
                 // Đợi 60 giây ngầm trên Server
                 await new Promise(resolve => setTimeout(resolve, 60000));
+
+                // Khóa nguyên tử (Atomic Lock) chống gửi trùng lặp với Web client hoặc thiết bị khác
+                const lockRes = await env.DB.prepare(
+                  "UPDATE licenses SET gmail_notify = 'SENDING' WHERE id = ? AND gmail_notify = 'NONE' AND key_status = 'OK'"
+                ).bind(newId).run();
+
+                if (!lockRes.meta || lockRes.meta.changes === 0) {
+                  return; // Đã được xử lý bởi Web client hoặc mục đã bị chỉnh sửa
+                }
+
                 const item = await env.DB.prepare("SELECT * FROM licenses WHERE id = ?").bind(newId).first();
-                if (!item || item.key_status !== "OK" || item.gmail_notify !== "NONE" || !item.email_phone || !item.email_phone.includes("@")) {
-                  return; // Không đủ điều kiện hoặc đã bị sửa
+                if (!item || !item.email_phone || !item.email_phone.includes("@")) {
+                  await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(newId).run();
+                  return;
                 }
                 const gasRes = await fetch(gasUrl, {
                   method: "POST",
@@ -200,7 +211,7 @@ export default {
                 try { gasJson = JSON.parse(gasText); } catch (_) { }
 
                 if (gasJson.success) {
-                  await env.DB.prepare("UPDATE licenses SET gmail_notify = 'SENT' WHERE id = ?").bind(newId).run();
+                  await env.DB.prepare("UPDATE licenses SET gmail_notify = 'OK' WHERE id = ?").bind(newId).run();
                 } else {
                   await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(newId).run();
                 }
@@ -225,7 +236,7 @@ export default {
           msg += ` (Lưu ý GitHub: ${gitRes.error})`;
         }
 
-        return jsonResponse({ success: true, message: msg, prefix });
+        return jsonResponse({ success: true, message: msg, prefix, id: newId });
       }
       else if (action === "update_license") {
         const { id, serial, rom_version, key_status, email_phone, country, note } = body;
@@ -594,8 +605,30 @@ export default {
         return jsonResponse({ success: true, enabled: isEnabled === 1 });
       }
       else if (action === "resend_mail") {
+        const isAuto = !!body.is_auto;
+
+        // Nếu là lệnh tự động gửi sau 60s, kiểm tra khóa nguyên tử chống gửi trùng lặp giữa nhiều máy mở web cùng lúc
+        if (isAuto) {
+          const lockRes = await env.DB.prepare(
+            "UPDATE licenses SET gmail_notify = 'SENDING' WHERE id = ? AND gmail_notify = 'NONE' AND key_status = 'OK'"
+          ).bind(body.id).run();
+
+          if (!lockRes.meta || lockRes.meta.changes === 0) {
+            // Máy khác hoặc Server ngầm đã xử lý trước đó rồi
+            const currentItem = await env.DB.prepare("SELECT gmail_notify FROM licenses WHERE id = ?").bind(body.id).first();
+            return jsonResponse({
+              success: true,
+              already_handled: true,
+              gmail_notify: currentItem ? (currentItem.gmail_notify === "SENT" ? "OK" : currentItem.gmail_notify) : "OK"
+            });
+          }
+        }
+
         const item = await env.DB.prepare("SELECT * FROM licenses WHERE id = ?").bind(body.id).first();
         if (!item || !item.email_phone || !item.email_phone.includes("@")) {
+          if (isAuto) {
+            await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(body.id).run();
+          }
           return jsonResponse({ success: false, error: "Email không hợp lệ" }, 400);
         }
 
@@ -621,7 +654,7 @@ export default {
           try { gasJson = JSON.parse(gasText); } catch (err) { }
 
           if (gasJson.success) {
-            await env.DB.prepare("UPDATE licenses SET gmail_notify = 'SENT' WHERE id = ?").bind(item.id).run();
+            await env.DB.prepare("UPDATE licenses SET gmail_notify = 'OK' WHERE id = ?").bind(item.id).run();
             await bumpDbVersion(env);
             return jsonResponse({ success: true, ref_id: gasJson.ref_id });
           } else {
@@ -1080,7 +1113,7 @@ async function sendMailAndUpdateStatus(env, device) {
     try { resJson = JSON.parse(resText); } catch (e) { }
 
     if (resJson.success || resText.includes("OK")) {
-      await env.DB.prepare("UPDATE licenses SET gmail_notify = 'SENT' WHERE id = ?").bind(device.id).run();
+      await env.DB.prepare("UPDATE licenses SET gmail_notify = 'OK' WHERE id = ?").bind(device.id).run();
     } else {
       await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(device.id).run();
     }
@@ -1382,7 +1415,7 @@ function renderAdminHTML() {
     .badge { padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; display: inline-block; border: 1px solid transparent; }
     .badge-OK { background: var(--badge-ok-bg); color: var(--badge-ok-color); border-color: var(--badge-ok-border); }
     .badge-DEL { background: var(--badge-del-bg); color: var(--badge-del-color); border-color: var(--badge-del-border); }
-    .badge-SENT { background: #e0f2fe; color: #0369a1; border-color: #bae6fd; }
+    .badge-SENT { background: var(--badge-ok-bg); color: var(--badge-ok-color); border-color: var(--badge-ok-border); }
     .badge-ERROR { background: var(--badge-del-bg); color: var(--badge-del-color); border-color: var(--badge-del-border); }
     .badge-NONE { background: var(--table-hover); color: var(--text-muted); border-color: var(--border-color); }
     .badge-shard { background: var(--badge-shard-bg); color: var(--badge-shard-color); border-color: var(--badge-shard-border); font-family: monospace; font-size: 11px; }
@@ -2924,8 +2957,10 @@ function renderAdminHTML() {
             '<td>' + (item.email_phone || "-") + '</td>' +
             '<td>' + item.country + '</td>' +
             (() => {
-            let mailBadgeHtml = '<span class="badge badge-' + item.gmail_notify + '">' + item.gmail_notify + '</span>';
-            if (systemData.auto_send_email && item.gmail_notify === "NONE") {
+            let notifyStatus = item.gmail_notify || "NONE";
+            if (notifyStatus === "SENT") notifyStatus = "OK";
+            let mailBadgeHtml = '<span class="badge badge-' + notifyStatus + '">' + (notifyStatus === "SENDING" ? "Đang gửi..." : notifyStatus) + '</span>';
+            if (systemData.auto_send_email && (notifyStatus === "NONE" || notifyStatus === "SENDING")) {
               const hasEmail = item.email_phone && item.email_phone.includes("@");
               const isSerialOk = item.serial && item.serial.trim() !== "";
               const isRomOk = item.rom_version && item.rom_version.trim() !== "";
@@ -2935,6 +2970,8 @@ function renderAdminHTML() {
                 const remainingSec = Math.ceil((targetTime - Date.now()) / 1000);
                 if (remainingSec > 0 && remainingSec <= 60) {
                   mailBadgeHtml = '<span class="badge badge-COUNTDOWN" data-id="' + item.id + '" data-target-time="' + targetTime + '">⏳ ' + remainingSec + 's</span>';
+                } else if (remainingSec <= 0) {
+                  mailBadgeHtml = '<span class="badge badge-off">Đang gửi...</span>';
                 }
               }
             }
@@ -3182,7 +3219,8 @@ function renderAdminHTML() {
           '</select></td>' +
           '<td><select class="bulk-cell-select bulk-gmail">' +
             '<option value="NONE"' + (item.gmail_notify === 'NONE' ? ' selected' : '') + '>NONE</option>' +
-            '<option value="SENT"' + (item.gmail_notify === 'SENT' ? ' selected' : '') + '>SENT</option>' +
+            '<option value="OK"' + (item.gmail_notify === 'OK' || item.gmail_notify === 'SENT' ? ' selected' : '') + '>OK</option>' +
+            '<option value="ERROR"' + (item.gmail_notify === 'ERROR' ? ' selected' : '') + '>ERROR</option>' +
           '</select></td>' +
           '<td class="col-note"><input type="text" class="bulk-cell-input bulk-note" value="' + (item.note || "") + '"></td>' +
         '</tr>';
@@ -3470,7 +3508,7 @@ function renderAdminHTML() {
               key_status: status.toUpperCase() === "DEL" ? "DEL" : "OK",
               email_phone: email,
               country: country.toUpperCase() === "OTHER" ? "Other" : "VN",
-              gmail_notify: gmail.toUpperCase() === "SENT" ? "SENT" : "NONE",
+              gmail_notify: (gmail.toUpperCase() === "SENT" || gmail.toUpperCase() === "OK") ? "OK" : "NONE",
               note: note
             });
           }
@@ -3656,9 +3694,36 @@ function renderAdminHTML() {
 
     
     // =========================================================================
-    // QUẢN LÝ CÀI ĐẶT TỰ ĐỘNG GỬI EMAIL & ĐẾM LÙI 60S
+    // QUẢN LÝ CÀI ĐẶT TỰ ĐỘNG GỬI EMAIL & ĐẾM LÙI 60S (TỐI ƯU REQUEST WORKER)
     // =========================================================================
     let countdownTrackerTimer = null;
+
+    function markMyCreatedLicense(id) {
+      try {
+        const stored = JSON.parse(sessionStorage.getItem("my_created_licenses") || "[]");
+        if (!stored.includes(id)) {
+          stored.push(id);
+          sessionStorage.setItem("my_created_licenses", JSON.stringify(stored));
+        }
+      } catch (e) {}
+    }
+
+    function isMyCreatedLicense(id) {
+      try {
+        const stored = JSON.parse(sessionStorage.getItem("my_created_licenses") || "[]");
+        return stored.includes(id);
+      } catch (e) {
+        return false;
+      }
+    }
+
+    function unmarkMyCreatedLicense(id) {
+      try {
+        let stored = JSON.parse(sessionStorage.getItem("my_created_licenses") || "[]");
+        stored = stored.filter(x => x !== id);
+        sessionStorage.setItem("my_created_licenses", JSON.stringify(stored));
+      } catch (e) {}
+    }
 
     function startGlobalCountdownTracker() {
       if (countdownTrackerTimer) clearInterval(countdownTrackerTimer);
@@ -3677,13 +3742,21 @@ function renderAdminHTML() {
           const targetTime = Number(badge.getAttribute("data-target-time"));
           const remaining = Math.ceil((targetTime - Date.now()) / 1000);
           if (remaining > 0) {
-            badge.innerText = "⏳ " + remaining + "s";
+            badge.innerText = remaining + "s";
           } else {
             badge.removeAttribute("data-target-time");
-            badge.className = "badge badge-off";
-            badge.innerText = "⏳ Đang gửi mail...";
             const id = Number(badge.getAttribute("data-id"));
-            triggerAutoSendEmail(id, badge);
+
+            // Đổi trạng thái sang "Đang gửi..." trên tất cả các máy
+            badge.className = "badge badge-off";
+            badge.innerText = "Đang gửi...";
+
+            // TỐI ƯU REQUEST: Chỉ máy trực tiếp bấm nút tạo mới mới gửi API
+            // Các máy 2, 3, 4,... khác sau khi đếm xong CHỈ chuyển sang "Đang gửi...", không gửi request
+            if (isMyCreatedLicense(id)) {
+              unmarkMyCreatedLicense(id);
+              triggerAutoSendEmail(id, badge);
+            }
           }
         });
       }, 1000);
@@ -3691,20 +3764,19 @@ function renderAdminHTML() {
 
     async function triggerAutoSendEmail(id, badgeEl) {
       try {
-        const res = await sendAdminAction({ action: "resend_mail", id: id }, "Đang tự động gửi email...");
+        const res = await sendAdminAction({ action: "resend_mail", id: id, is_auto: true }, "Đang tự động gửi email...");
         if (res && res.success) {
-          if (badgeEl) {
-            badgeEl.className = "badge badge-SENT";
-            badgeEl.innerText = "SENT";
-          }
+          const finalStatus = (res.gmail_notify && res.gmail_notify !== "SENDING") ? (res.gmail_notify === "SENT" ? "OK" : res.gmail_notify) : "OK";
           const found = (systemData.licenses || []).find(l => l.id === id);
-          if (found) found.gmail_notify = "SENT";
+          if (found) found.gmail_notify = finalStatus;
           if (currentSelectedItem && currentSelectedItem.id === id) {
-            currentSelectedItem.gmail_notify = "SENT";
+            currentSelectedItem.gmail_notify = finalStatus;
             const sendBtn = document.getElementById("btnSendMail");
             if (sendBtn) sendBtn.style.display = "none";
           }
-          showToast("Đã tự động gửi email thông báo kích hoạt thành công!", "success", 5000);
+          if (!res.already_handled) {
+            showToast("Đã tự động gửi email thông báo kích hoạt thành công qua GAS!", "success", 5000);
+          }
         } else {
           if (badgeEl) {
             badgeEl.className = "badge badge-ERROR";
@@ -3892,12 +3964,16 @@ function renderAdminHTML() {
 
       const sendBtn = document.getElementById("btnSendMail");
       if (sendBtn) {
-        if (currentSelectedItem.gmail_notify === "SENT") {
-          sendBtn.style.display = "none";
-        } else {
+        const emailVal = (currentSelectedItem.email_phone || "").trim();
+        const hasValidEmail = emailVal.includes("@") && emailVal.length >= 5;
+        const isAlreadySent = currentSelectedItem.gmail_notify === "OK" || currentSelectedItem.gmail_notify === "SENT";
+
+        if (hasValidEmail && !isAlreadySent) {
           sendBtn.style.display = "inline-block";
           sendBtn.innerHTML = "Gửi Email kích hoạt";
           sendBtn.disabled = false;
+        } else {
+          sendBtn.style.display = "none";
         }
       }
 
@@ -4009,6 +4085,10 @@ function renderAdminHTML() {
 
         if (!res || !res.success) {
           return showToast((res && res.error) || "Không thể tạo bản ghi!", "error");
+        }
+
+        if (res.id) {
+          markMyCreatedLicense(res.id);
         }
 
         closeCreateLicenseModal();
