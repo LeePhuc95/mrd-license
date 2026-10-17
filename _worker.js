@@ -120,8 +120,9 @@ export default {
     if (url.pathname === "/api/admin/action" && request.method === "POST") {
       if (!isAuthed) return jsonResponse({ error: "Unauthorized" }, 401);
 
-      const body = await request.json();
-      const { action } = body;
+      try {
+        const body = await request.json();
+        const { action } = body;
 
       const mutatingActions = new Set([
         "create_license", "update_license", "delete_license",
@@ -497,8 +498,12 @@ export default {
           return jsonResponse({ success: false, error: "Danh sách sản phẩm không hợp lệ" }, 400);
         }
         await ensureDbSchema(env);
-        const placeholders = names.map(() => "?").join(",");
-        await env.DB.prepare(`DELETE FROM rom_categories WHERE name IN (${placeholders})`).bind(...names).run();
+        const CHUNK_SIZE = 50;
+        for (let i = 0; i < names.length; i += CHUNK_SIZE) {
+          const chunk = names.slice(i, i + CHUNK_SIZE);
+          const placeholders = chunk.map(() => "?").join(",");
+          await env.DB.prepare(`DELETE FROM rom_categories WHERE name IN (${placeholders})`).bind(...chunk).run();
+        }
         return jsonResponse({ success: true, count: names.length, message: `Đã xóa thành công ${names.length} Sản phẩm!` });
       }
       else if (action === "bulk_delete_licenses") {
@@ -507,15 +512,20 @@ export default {
           return jsonResponse({ success: false, error: "Danh sách ID không hợp lệ" }, 400);
         }
         await ensureDbSchema(env);
-        const placeholders = ids.map(() => "?").join(",");
-        const oldItems = await env.DB.prepare(`SELECT serial, prefix FROM licenses WHERE id IN (${placeholders})`).bind(...ids).all();
-        const affectedPrefixes = new Set();
-        (oldItems.results || []).forEach(row => {
-          const p = row.prefix || getDevicePrefix(row.serial);
-          if (p) affectedPrefixes.add(p);
-        });
 
-        await env.DB.prepare(`DELETE FROM licenses WHERE id IN (${placeholders})`).bind(...ids).run();
+        const affectedPrefixes = new Set();
+        const CHUNK_SIZE = 50;
+
+        for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+          const chunkIds = ids.slice(i, i + CHUNK_SIZE);
+          const placeholders = chunkIds.map(() => "?").join(",");
+          const oldItems = await env.DB.prepare(`SELECT serial, prefix FROM licenses WHERE id IN (${placeholders})`).bind(...chunkIds).all();
+          (oldItems.results || []).forEach(row => {
+            const p = row.prefix || getDevicePrefix(row.serial);
+            if (p) affectedPrefixes.add(p);
+          });
+          await env.DB.prepare(`DELETE FROM licenses WHERE id IN (${placeholders})`).bind(...chunkIds).run();
+        }
 
         const delPrefixesList = Array.from(affectedPrefixes).sort();
         const gitRes = await syncShardsBlockToGitHub(env, delPrefixesList, `Xóa ${ids.length} thiết bị (${delPrefixesList.length} shards)`);
@@ -665,8 +675,12 @@ export default {
           return jsonResponse({ success: false, error: "Danh sách ID không hợp lệ" }, 400);
         }
         await ensureDbSchema(env);
-        const placeholders = ids.map(() => "?").join(",");
-        await env.DB.prepare(`DELETE FROM gift_keys WHERE id IN (${placeholders})`).bind(...ids).run();
+        const CHUNK_SIZE = 50;
+        for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+          const chunk = ids.slice(i, i + CHUNK_SIZE);
+          const placeholders = chunk.map(() => "?").join(",");
+          await env.DB.prepare(`DELETE FROM gift_keys WHERE id IN (${placeholders})`).bind(...chunk).run();
+        }
 
         const gitRes = await syncGiftCodeToGitHub(env);
         if (!gitRes.success) {
@@ -795,7 +809,14 @@ export default {
         }
       }
 
-      return jsonResponse({ success: true });
+        return jsonResponse({ success: true });
+      } catch (actErr) {
+        console.error("Lỗi API Admin Action:", actErr);
+        return jsonResponse({
+          success: false,
+          error: "Lỗi xử lý máy chủ: " + (actErr.message || String(actErr))
+        }, 500);
+      }
     }
 
     // =========================================================================
@@ -1153,28 +1174,30 @@ async function syncShardsBlockToGitHub(env, prefixes, customMessage) {
     const filesToCommit = [];
     const xorKey = env?.XOR_KEY;
 
+    // Lấy dữ liệu licenses của toàn bộ các prefix cần đồng bộ trong các mẻ batch (tối đa 50 prefix/truy vấn)
+    const prefixMap = new Map();
     for (const prefix of list) {
-      // Tự động gán prefix cho các bản ghi cũ hoặc bị trống có serial khớp với prefix này
-      try {
-        await env.DB.prepare(`
-          UPDATE licenses 
-          SET prefix = ? 
-          WHERE (prefix IS NULL OR prefix = '' OR prefix != ?) 
-            AND (
-              CASE 
-                WHEN length(lower(replace(replace(serial, ' ', ''), '-', ''))) >= 2 
-                THEN substr(lower(replace(replace(serial, ' ', ''), '-', '')), 1, 2)
-                ELSE substr(lower(replace(replace(serial, ' ', ''), '-', '')) || '00', 1, 2)
-              END = ?
-            )
-        `).bind(prefix, prefix, prefix).run();
-      } catch (_) {}
+      prefixMap.set(prefix, []);
+    }
 
+    const CHUNK_SIZE = 50;
+    for (let i = 0; i < list.length; i += CHUNK_SIZE) {
+      const chunkPrefixes = list.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunkPrefixes.map(() => "?").join(",");
       const { results } = await env.DB.prepare(
-        "SELECT serial, rom_version, key_status FROM licenses WHERE prefix = ?"
-      ).bind(prefix).all();
+        `SELECT prefix, serial, rom_version, key_status FROM licenses WHERE prefix IN (${placeholders})`
+      ).bind(...chunkPrefixes).all();
 
-      const records = results || [];
+      for (const row of (results || [])) {
+        const p = (row.prefix || "").toLowerCase();
+        if (prefixMap.has(p)) {
+          prefixMap.get(p).push(row);
+        }
+      }
+    }
+
+    for (const prefix of list) {
+      const records = prefixMap.get(prefix) || [];
 
       // Format: SERIAL:ROM_VERSION:KEY_STATUS -> XOR encrypt với khóa env.XOR_KEY -> Hex
       const encryptedList = records.map(r => {
@@ -4607,7 +4630,18 @@ function renderAdminHTML() {
           headers: { "Content-Type": "application/json", "Authorization": "Bearer " + currentAuthToken },
           body: JSON.stringify(payload)
         });
-        return await res.json();
+        const text = await res.text();
+        try {
+          return JSON.parse(text);
+        } catch (_) {
+          const stripped = text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+          return {
+            success: false,
+            error: res.ok
+              ? "Lỗi định dạng phản hồi máy chủ: " + text.slice(0, 100)
+              : "Máy chủ phản hồi lỗi (HTTP " + res.status + "): " + (stripped.slice(0, 150) || "Lỗi không xác định")
+          };
+        }
       } catch (err) {
         return { success: false, error: err.message };
       } finally {
