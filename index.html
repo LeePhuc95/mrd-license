@@ -2020,7 +2020,7 @@
                 </th>
                 <th class="col-stt">STT</th>
                 <th style="width: 180px;">GIFT CODE</th>
-                <th style="width: 120px;">NGÀY TẠO</th>
+                <th style="width: 120px;">NGÀY BẮT ĐẦU</th>
                 <th style="width: 120px;">NGÀY HẾT HẠN</th>
                 <th style="width: 110px;">GIA HẠN</th>
                 <th style="width: 110px;">TRẠNG THÁI KEY</th>
@@ -2135,7 +2135,7 @@
               <tr>
                 <th style="width: 40px;">STT</th>
                 <th>GIFT CODE (*)</th>
-                <th>NGÀY TẠO (YYYY-MM-DD) (*)</th>
+                <th>NGÀY BẮT ĐẦU (YYYY-MM-DD) (*)</th>
                 <th>NGÀY HẾT HẠN (YYYY-MM-DD) (*)</th>
                 <th style="width: 100px;">GIA HẠN (*)</th>
                 <th class="col-note">GHI CHÚ</th>
@@ -2269,7 +2269,7 @@
         </div>
       </div>
       <div class="form-group">
-        <label>NGÀY TẠO (YYYY-MM-DD) (*)</label>
+        <label>NGÀY BẮT ĐẦU (YYYY-MM-DD) (*)</label>
         <div class="date-input-wrap">
           <input type="text" id="giftStartDate" placeholder="YYYY-MM-DD" maxlength="15"
             oninput="syncInputToDatePicker('giftStartDate', 'giftStartDatePicker')"
@@ -4001,9 +4001,10 @@
       const startPicker = document.getElementById("giftStartDatePicker");
       if (startPicker) startPicker.value = today;
 
-      const nextMonth = new Date();
-      nextMonth.setDate(nextMonth.getDate() + 30);
-      const expStr = nextMonth.toISOString().split("T")[0];
+      const nextDay = new Date();
+      // Gợi ý NGÀY HẾT HẠN = NGÀY TẠO + 1, nếu muốn 1 tháng thì sửa "nextDay.setDate(nextDay.getDate() + 30)"
+      nextDay.setDate(nextDay.getDate() + 1);
+      const expStr = nextDay.toISOString().split("T")[0];
       document.getElementById("giftExpDate").value = expStr;
       const expPicker = document.getElementById("giftExpDatePicker");
       if (expPicker) expPicker.value = expStr;
