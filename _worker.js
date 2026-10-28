@@ -66,20 +66,31 @@ export default {
           error: "Chưa liên kết CSDL D1 (tên biến 'DB') trong Settings -> Functions -> D1 database bindings của Cloudflare Pages!",
           licenses: [],
           rom_categories: [],
+          license_tables: ["androidtv-x86"],
+          current_table: "androidtv-x86",
           pages_domain: env.PAGES_DOMAIN ? env.PAGES_DOMAIN.replace(/\/+$/, '') : '',
           license_quota: { limit: 10000, used: 0, remaining: 10000 }
         });
       }
 
       await ensureDbSchema(env);
-      const MAX_LICENSE_REQ = 10000; // Trần 10.000 req dành riêng cho License
+      const MAX_LICENSE_REQ = 10000;
+
+      // Xác định bảng bản quyền mục tiêu
+      const reqTable = sanitizeLicenseName(url.searchParams.get("table"));
+      const regListRes = await env.DB.prepare("SELECT table_name FROM license_registries ORDER BY created_at ASC").all();
+      const allTables = (regListRes.results || []).map(r => r.table_name);
+      if (allTables.length === 0) allTables.push("androidtv-x86");
+
+      const targetTable = (reqTable && allTables.includes(reqTable)) ? reqTable : allTables[0];
+      const actualTable = `${targetTable}_license`;
 
       // Truy vấn đồng thời dữ liệu bản quyền, sản phẩm, request quota, Gift keys, phiên bản DB và cài đặt
       const [licensesRes, romsRes, statsRes, giftKeysRes, versionRes, autoEmailRes] = await Promise.all([
-        env.DB.prepare("SELECT * FROM licenses ORDER BY id DESC").all(),
-        env.DB.prepare("SELECT * FROM rom_categories ORDER BY name ASC").all(),
+        env.DB.prepare(`SELECT * FROM "${actualTable}" ORDER BY id DESC`).all().catch(() => ({ results: [] })),
+        env.DB.prepare("SELECT name FROM product_categories WHERE license_table = ? ORDER BY name ASC").bind(targetTable).all(),
         env.DB.prepare("SELECT req_count FROM system_stats WHERE date_key = ? AND service_type = 'LICENSE'").bind(today).first(),
-        env.DB.prepare("SELECT * FROM gift_keys ORDER BY created_at DESC").all(),
+        env.DB.prepare("SELECT * FROM gift_keys WHERE license_table = ? ORDER BY created_at DESC").bind(targetTable).all(),
         env.DB.prepare("SELECT req_count FROM system_stats WHERE date_key = 'SYSTEM' AND service_type = 'DB_VERSION'").first(),
         env.DB.prepare("SELECT req_count FROM system_stats WHERE date_key = 'SETTINGS' AND service_type = 'AUTO_SEND_EMAIL'").first()
       ]);
@@ -95,6 +106,8 @@ export default {
         licenses: licensesList,
         rom_categories: (romsRes.results || []).map(r => r.name),
         gift_keys: giftKeysRes?.results || [],
+        license_tables: allTables,
+        current_table: targetTable,
         github_repo: env.GITHUB_REPO ? String(env.GITHUB_REPO).trim() : '',
         pages_domain: env.PAGES_DOMAIN ? env.PAGES_DOMAIN.replace(/\/+$/, '') : '',
         db_version: currentDbVersion,
@@ -113,6 +126,8 @@ export default {
       try {
         const body = await request.json();
         const { action } = body;
+        const currentTable = sanitizeLicenseName(body.license_table) || "androidtv-x86";
+        const actualTable = `${currentTable}_license`;
 
         const mutatingActions = new Set([
           "create_license", "update_license", "delete_license",
@@ -121,41 +136,170 @@ export default {
           "bulk_delete_licenses", "bulk_update_licenses", "bulk_import_licenses",
           "bulk_delete_gift_keys", "bulk_update_gift_keys",
           "bulk_import_roms",
-          "update_setting_auto_email"
+          "update_setting_auto_email",
+          "create_license_table", "rename_license_table", "delete_license_table"
         ]);
         if (mutatingActions.has(action)) {
           ctx.waitUntil(bumpDbVersion(env));
         }
 
-        if (action === "create_license") {
+        // =====================================================================
+        // THAO TÁC QUẢN LÝ BẢNG BẢN QUYỀN
+        // =====================================================================
+        if (action === "create_license_table") {
+          const rawName = body.name;
+          const shortName = sanitizeLicenseName(rawName);
+          if (!shortName) {
+            return jsonResponse({ success: false, error: "Tên bảng không hợp lệ! Chỉ dùng chữ cái, số, gạch nối (-) hoặc gạch dưới (_)." }, 400);
+          }
+
+          await ensureDbSchema(env);
+          const newActual = `${shortName}_license`;
+
+          // Kiểm tra xem bảng đã tồn tại chưa
+          const regExists = await env.DB.prepare("SELECT table_name FROM license_registries WHERE table_name = ?").bind(shortName).first();
+          if (regExists) {
+            return jsonResponse({ success: false, error: `Bảng bản quyền "${shortName}" đã tồn tại trong hệ thống!` }, 400);
+          }
+
+          // Tạo bảng trong D1
+          await env.DB.prepare(`
+            CREATE TABLE IF NOT EXISTS "${newActual}" (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              serial TEXT NOT NULL,
+              rom_version TEXT NOT NULL,
+              key_status TEXT DEFAULT 'OK',
+              email_phone TEXT,
+              country TEXT DEFAULT 'VN',
+              gmail_notify TEXT DEFAULT 'NONE',
+              note TEXT,
+              created_at INTEGER,
+              prefix TEXT
+            )
+          `).run();
+          await env.DB.prepare(`CREATE INDEX IF NOT EXISTS "idx_${shortName}_prefix" ON "${newActual}"(prefix)`).run();
+          await env.DB.prepare(`CREATE INDEX IF NOT EXISTS "idx_${shortName}_serial_rom" ON "${newActual}"(serial, rom_version)`).run();
+
+          // Thêm vào danh bạ registries
+          await env.DB.prepare("INSERT INTO license_registries (table_name, display_name, created_at) VALUES (?, ?, ?)").bind(shortName, shortName, Date.now()).run();
+
+          return jsonResponse({
+            success: true,
+            table_name: shortName,
+            actual_table: newActual,
+            message: `Đã tạo bảng bản quyền "${newActual}" thành công!`
+          });
+        }
+        else if (action === "rename_license_table") {
+          const oldShort = sanitizeLicenseName(body.old_name);
+          const newShort = sanitizeLicenseName(body.new_name);
+          if (!oldShort || !newShort) {
+            return jsonResponse({ success: false, error: "Tên bảng cũ hoặc mới không hợp lệ!" }, 400);
+          }
+          if (oldShort === newShort) {
+            return jsonResponse({ success: true, message: "Tên bảng không đổi." });
+          }
+
+          await ensureDbSchema(env);
+          const oldActual = `${oldShort}_license`;
+          const newActual = `${newShort}_license`;
+
+          const checkExists = await env.DB.prepare("SELECT table_name FROM license_registries WHERE table_name = ?").bind(newShort).first();
+          if (checkExists) {
+            return jsonResponse({ success: false, error: `Tên bảng "${newShort}" đã tồn tại!` }, 400);
+          }
+
+          // 1. Đổi tên bảng trong D1
+          await env.DB.prepare(`ALTER TABLE "${oldActual}" RENAME TO "${newActual}"`).run();
+
+          // 2. Cập nhật dữ liệu liên kết trong product_categories và gift_keys
+          await env.DB.prepare("UPDATE product_categories SET license_table = ? WHERE license_table = ?").bind(newShort, oldShort).run();
+          await env.DB.prepare("UPDATE gift_keys SET license_table = ? WHERE license_table = ?").bind(newShort, oldShort).run();
+          await env.DB.prepare("UPDATE license_registries SET table_name = ?, display_name = ? WHERE table_name = ?").bind(newShort, newShort, oldShort).run();
+
+          // 3. Đổi tên thư mục tương ứng trên GitHub (json/<oldShort>/ -> json/<newShort>/)
+          const gitRes = await renameGitHubFolder(env, oldShort, newShort);
+
+          return jsonResponse({
+            success: true,
+            old_name: oldShort,
+            new_name: newShort,
+            github_result: gitRes,
+            message: `Đã đổi tên bảng thành "${newActual}" và cập nhật thư mục GitHub!`
+          });
+        }
+        else if (action === "delete_license_table") {
+          const targetShort = sanitizeLicenseName(body.name || body.table_name || currentTable);
+          if (!targetShort) {
+            return jsonResponse({ success: false, error: "Tên bảng cần xóa không hợp lệ!" }, 400);
+          }
+
+          await ensureDbSchema(env);
+          const delActual = `${targetShort}_license`;
+
+          // Bắt buộc kiểm tra dữ liệu trong bảng: chỉ xóa khi bảng trống
+          let rowCount = 0;
+          try {
+            const countRow = await env.DB.prepare(`SELECT COUNT(*) as cnt FROM "${delActual}"`).first();
+            rowCount = countRow ? (countRow.cnt || 0) : 0;
+          } catch (_) { }
+
+          if (rowCount > 0) {
+            return jsonResponse({
+              success: false,
+              error: `Bảng "${delActual}" còn chứa ${rowCount} thiết bị bản quyền, không thể xóa! Vui lòng xóa hết bản quyền trong bảng trước khi xóa bảng.`
+            }, 400);
+          }
+
+          // Xóa bảng D1
+          try {
+            await env.DB.prepare(`DROP TABLE IF EXISTS "${delActual}"`).run();
+          } catch (dropErr) {
+            console.error("Lỗi xóa bảng D1:", dropErr);
+          }
+
+          // Tự động xóa dữ liệu liên kết của bảng này trong các bảng dùng chung
+          await env.DB.prepare("DELETE FROM product_categories WHERE license_table = ?").bind(targetShort).run();
+          await env.DB.prepare("DELETE FROM gift_keys WHERE license_table = ?").bind(targetShort).run();
+          await env.DB.prepare("DELETE FROM license_registries WHERE table_name = ?").bind(targetShort).run();
+
+          return jsonResponse({
+            success: true,
+            table_name: targetShort,
+            message: `Đã xóa bảng "${delActual}" và làm sạch các dữ liệu liên kết thành công!`
+          });
+        }
+
+        // =====================================================================
+        // THAO TÁC BẢN QUYỀN (LICENSES)
+        // =====================================================================
+        else if (action === "create_license") {
           const { rom_version, key_status, email_phone, country, note } = body;
           const serial = sanitizeCode(body.serial);
           if (!serial) {
             return jsonResponse({ success: false, error: "Serial không hợp lệ" }, 400);
           }
 
+          await ensureDbSchema(env);
           const existing = await env.DB.prepare(
-            "SELECT id FROM licenses WHERE serial = ? AND rom_version = ?"
+            `SELECT id FROM "${actualTable}" WHERE serial = ? AND rom_version = ?`
           ).bind(serial, rom_version).first();
 
           if (existing) {
             return jsonResponse({
               success: false,
-              error: `Thiết bị có Serial "${serial}" và Sản phẩm "${rom_version}" đã tồn tại trong hệ thống!`
+              error: `Thiết bị có Serial "${serial}" và Sản phẩm "${rom_version}" đã tồn tại trong bảng ${currentTable}!`
             }, 400);
           }
 
-          await ensureDbSchema(env);
           const prefix = getDevicePrefix(serial);
-
           const now = Date.now();
           const insertRes = await env.DB.prepare(
-            `INSERT INTO licenses (serial, rom_version, key_status, email_phone, country, gmail_notify, note, created_at, prefix)
+            `INSERT INTO "${actualTable}" (serial, rom_version, key_status, email_phone, country, gmail_notify, note, created_at, prefix)
            VALUES (?, ?, ?, ?, ?, 'NONE', ?, ?, ?)`
           ).bind(serial, rom_version, key_status || 'OK', email_phone || '', country || 'VN', note || '', now, prefix).run();
 
           const newId = insertRes.meta?.last_row_id;
-
           const gasUrl = env.GAS_WEBAPP_URL;
           const secret = env.INTERNAL_SECRET;
 
@@ -172,21 +316,17 @@ export default {
             if (isAutoEmailEnabled && hasEmail && isSerialNotEmpty && isRomNotEmpty && isKeyOk) {
               ctx.waitUntil((async () => {
                 try {
-                  // Đợi 60 giây ngầm trên Server
                   await new Promise(resolve => setTimeout(resolve, 60000));
 
-                  // Khóa nguyên tử (Atomic Lock) chống gửi trùng lặp với Web client hoặc thiết bị khác
                   const lockRes = await env.DB.prepare(
-                    "UPDATE licenses SET gmail_notify = 'SENDING' WHERE id = ? AND gmail_notify = 'NONE' AND key_status = 'OK'"
+                    `UPDATE "${actualTable}" SET gmail_notify = 'SENDING' WHERE id = ? AND gmail_notify = 'NONE' AND key_status = 'OK'`
                   ).bind(newId).run();
 
-                  if (!lockRes.meta || lockRes.meta.changes === 0) {
-                    return; // Đã được xử lý bởi Web client hoặc mục đã bị chỉnh sửa
-                  }
+                  if (!lockRes.meta || lockRes.meta.changes === 0) return;
 
-                  const item = await env.DB.prepare("SELECT * FROM licenses WHERE id = ?").bind(newId).first();
+                  const item = await env.DB.prepare(`SELECT * FROM "${actualTable}" WHERE id = ?`).bind(newId).first();
                   if (!item || !item.email_phone || !item.email_phone.includes("@")) {
-                    await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(newId).run();
+                    await env.DB.prepare(`UPDATE "${actualTable}" SET gmail_notify = 'ERROR' WHERE id = ?`).bind(newId).run();
                     return;
                   }
                   const gasRes = await fetch(gasUrl, {
@@ -206,15 +346,15 @@ export default {
                   try { gasJson = JSON.parse(gasText); } catch (_) { }
 
                   if (gasJson.success) {
-                    await env.DB.prepare("UPDATE licenses SET gmail_notify = 'OK' WHERE id = ?").bind(newId).run();
+                    await env.DB.prepare(`UPDATE "${actualTable}" SET gmail_notify = 'OK' WHERE id = ?`).bind(newId).run();
                   } else {
-                    await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(newId).run();
+                    await env.DB.prepare(`UPDATE "${actualTable}" SET gmail_notify = 'ERROR' WHERE id = ?`).bind(newId).run();
                   }
                   await bumpDbVersion(env);
                 } catch (err) {
                   console.error("Lỗi gửi email tự động 60s:", err);
                   try {
-                    await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(newId).run();
+                    await env.DB.prepare(`UPDATE "${actualTable}" SET gmail_notify = 'ERROR' WHERE id = ?`).bind(newId).run();
                     await bumpDbVersion(env);
                   } catch (_) { }
                 }
@@ -223,7 +363,7 @@ export default {
           }
 
           // Tự động đẩy file phân mảnh lên GitHub Repo cho Cloudflare Pages (dùng block commit)
-          const gitRes = await syncShardsBlockToGitHub(env, [prefix], `Add license ${serial}`);
+          const gitRes = await syncShardsBlockToGitHub(env, [prefix], `Add license ${serial}`, currentTable);
           if (!gitRes.success) {
             return jsonResponse({
               success: false,
@@ -233,7 +373,7 @@ export default {
 
           return jsonResponse({
             success: true,
-            message: `Đã thêm thành công và đồng bộ shard json/${prefix}.json lên GitHub!`,
+            message: `Đã thêm thành công và đồng bộ shard json/${currentTable}/${prefix}.json lên GitHub!`,
             prefix,
             id: newId
           });
@@ -245,8 +385,9 @@ export default {
             return jsonResponse({ success: false, error: "Serial không hợp lệ" }, 400);
           }
 
+          await ensureDbSchema(env);
           const duplicate = await env.DB.prepare(
-            "SELECT id FROM licenses WHERE serial = ? AND rom_version = ? AND id != ?"
+            `SELECT id FROM "${actualTable}" WHERE serial = ? AND rom_version = ? AND id != ?`
           ).bind(serial, rom_version, id).first();
 
           if (duplicate) {
@@ -256,19 +397,18 @@ export default {
             }, 400);
           }
 
-          await ensureDbSchema(env);
-          const oldItem = await env.DB.prepare("SELECT serial, prefix FROM licenses WHERE id = ?").bind(id).first();
+          const oldItem = await env.DB.prepare(`SELECT serial, prefix FROM "${actualTable}" WHERE id = ?`).bind(id).first();
           const oldPrefix = oldItem?.prefix || (oldItem ? getDevicePrefix(oldItem.serial) : null);
           const newPrefix = getDevicePrefix(serial);
 
           await env.DB.prepare(
-            `UPDATE licenses SET serial = ?, rom_version = ?, key_status = ?, email_phone = ?, country = ?, note = ?, prefix = ?
+            `UPDATE "${actualTable}" SET serial = ?, rom_version = ?, key_status = ?, email_phone = ?, country = ?, note = ?, prefix = ?
            WHERE id = ?`
           ).bind(serial, rom_version, key_status, email_phone || '', country, note || '', newPrefix, id).run();
 
           // Đồng bộ block lên GitHub
           const prefixesToSync = Array.from(new Set([oldPrefix, newPrefix].filter(Boolean)));
-          const gitRes = await syncShardsBlockToGitHub(env, prefixesToSync, `Update license ${serial}`);
+          const gitRes = await syncShardsBlockToGitHub(env, prefixesToSync, `Update license ${serial}`, currentTable);
           if (!gitRes.success) {
             return jsonResponse({
               success: false,
@@ -283,13 +423,14 @@ export default {
           });
         }
         else if (action === "delete_license") {
-          const oldItem = await env.DB.prepare("SELECT serial, prefix FROM licenses WHERE id = ?").bind(body.id).first();
+          await ensureDbSchema(env);
+          const oldItem = await env.DB.prepare(`SELECT serial, prefix FROM "${actualTable}" WHERE id = ?`).bind(body.id).first();
           const prefix = oldItem?.prefix || (oldItem ? getDevicePrefix(oldItem.serial) : null);
 
-          await env.DB.prepare("DELETE FROM licenses WHERE id = ?").bind(body.id).run();
+          await env.DB.prepare(`DELETE FROM "${actualTable}" WHERE id = ?`).bind(body.id).run();
 
           if (prefix) {
-            const gitRes = await syncShardsBlockToGitHub(env, [prefix], `Delete license ${body.id}`);
+            const gitRes = await syncShardsBlockToGitHub(env, [prefix], `Delete license ${body.id}`, currentTable);
             if (!gitRes.success) {
               return jsonResponse({
                 success: false,
@@ -305,13 +446,13 @@ export default {
             return jsonResponse({ success: false, error: "Thiếu prefix" }, 400);
           }
           await ensureDbSchema(env);
-          const gitRes = await syncShardsBlockToGitHub(env, [prefix], `Sync shard json/${prefix}.json`);
+          const gitRes = await syncShardsBlockToGitHub(env, [prefix], `Sync shard json/${currentTable}/${prefix}.json`, currentTable);
           if (gitRes && gitRes.success) {
             return jsonResponse({
               success: true,
               prefix,
               count: gitRes.count,
-              message: `Đã lưu json/${prefix}.json lên GitHub thành công!`
+              message: `Đã lưu json/${currentTable}/${prefix}.json lên GitHub thành công!`
             });
           } else {
             return jsonResponse({
@@ -323,7 +464,7 @@ export default {
         }
         else if (action === "reindex_all_prefixes") {
           await ensureDbSchema(env);
-          const { results } = await env.DB.prepare("SELECT id, serial, rom_version, key_status FROM licenses").all();
+          const { results } = await env.DB.prepare(`SELECT id, serial, rom_version, key_status FROM "${actualTable}"`).all();
           const records = results || [];
           const xorKey = env?.XOR_KEY;
 
@@ -332,7 +473,7 @@ export default {
 
           for (const row of records) {
             const p = getDevicePrefix(row.serial);
-            updateStmts.push(env.DB.prepare("UPDATE licenses SET prefix = ? WHERE id = ?").bind(p, row.id));
+            updateStmts.push(env.DB.prepare(`UPDATE "${actualTable}" SET prefix = ? WHERE id = ?`).bind(p, row.id));
 
             if (!prefixMap.has(p)) prefixMap.set(p, []);
             const raw = `${row.serial}:${row.rom_version}:${row.key_status}`;
@@ -344,18 +485,17 @@ export default {
           const filesToCommit = [];
           for (const [p, encList] of prefixMap.entries()) {
             filesToCommit.push({
-              path: `json/${p}.json`,
+              path: `json/${currentTable}/${p}.json`,
               content: JSON.stringify(encList, null, 2)
             });
           }
 
-          // Thêm cả json/giftcode.json vào cùng 1 block commit duy nhất
+          // Thêm cả json/<currentTable>/giftcode.json vào cùng 1 block commit duy nhất
           try {
             const today = new Date().toISOString().split("T")[0];
-            const xorKey = env?.XOR_KEY;
             const giftRes = await env.DB.prepare(
-              "SELECT gift_code, start_date, expiration_date, extend FROM gift_keys WHERE expiration_date >= ? ORDER BY created_at DESC"
-            ).bind(today).all();
+              "SELECT gift_code, start_date, expiration_date, extend FROM gift_keys WHERE license_table = ? AND expiration_date >= ? ORDER BY created_at DESC"
+            ).bind(currentTable, today).all();
             const giftList = (giftRes?.results || []).map(r => {
               const extendVal = r.extend != null ? Number(r.extend) : 7;
               const rawMeta = `${r.start_date}:${r.expiration_date}:${extendVal}`;
@@ -365,13 +505,12 @@ export default {
               };
             });
             filesToCommit.push({
-              path: "json/giftcode.json",
+              path: `json/${currentTable}/giftcode.json`,
               content: JSON.stringify(giftList, null, 2)
             });
           } catch (_) { }
 
-          // Gửi toàn bộ block lên GitHub trong 1 commit duy nhất
-          const gitRes = await commitFilesToGitHubBlock(env, filesToCommit, `Đồng bộ toàn bộ ${filesToCommit.length} file Shard via MRD Admin`);
+          const gitRes = await commitFilesToGitHubBlock(env, filesToCommit, `Đồng bộ toàn bộ ${filesToCommit.length} file Shard bảng ${currentTable} via MRD Admin`);
           if (!gitRes.success) {
             return jsonResponse({ success: false, error: gitRes.error }, 500);
           }
@@ -383,6 +522,10 @@ export default {
             message: `Đã đóng gói và đồng bộ thành công ${filesToCommit.length} file lên GitHub!`
           });
         }
+
+        // =====================================================================
+        // THAO TÁC GIFT CODE
+        // =====================================================================
         else if (action === "create_gift_key") {
           let { start_date, expiration_date, note, extend } = body;
           const gift_code = sanitizeCode(body.gift_code);
@@ -403,11 +546,11 @@ export default {
           }
 
           await env.DB.prepare(`
-          INSERT INTO gift_keys (gift_code, start_date, expiration_date, extend, note, created_at)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).bind(gift_code, start_date, expiration_date, extendDays, note || '', Date.now()).run();
+            INSERT INTO gift_keys (gift_code, start_date, expiration_date, extend, note, created_at, license_table)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).bind(gift_code, start_date, expiration_date, extendDays, note || '', Date.now(), currentTable).run();
 
-          const gitRes = await syncGiftCodeToGitHub(env);
+          const gitRes = await syncGiftCodeToGitHub(env, currentTable);
           if (!gitRes.success) {
             return jsonResponse({
               success: false,
@@ -417,7 +560,7 @@ export default {
 
           return jsonResponse({
             success: true,
-            message: "Đã tạo Gift Code thành công và đồng bộ json/giftcode.json lên GitHub!"
+            message: `Đã tạo Gift Code thành công và đồng bộ json/${currentTable}/giftcode.json lên GitHub!`
           });
         }
         else if (action === "update_gift_key") {
@@ -440,11 +583,11 @@ export default {
           }
 
           await env.DB.prepare(`
-          UPDATE gift_keys SET gift_code = ?, start_date = ?, expiration_date = ?, extend = ?, note = ?
-          WHERE id = ?
-        `).bind(gift_code, start_date, expiration_date, extendDays, note || '', id).run();
+            UPDATE gift_keys SET gift_code = ?, start_date = ?, expiration_date = ?, extend = ?, note = ?
+            WHERE id = ?
+          `).bind(gift_code, start_date, expiration_date, extendDays, note || '', id).run();
 
-          const gitRes = await syncGiftCodeToGitHub(env);
+          const gitRes = await syncGiftCodeToGitHub(env, currentTable);
           if (!gitRes.success) {
             return jsonResponse({
               success: false,
@@ -454,13 +597,14 @@ export default {
 
           return jsonResponse({
             success: true,
-            message: "Đã cập nhật Gift Code thành công và đồng bộ json/giftcode.json lên GitHub!"
+            message: `Đã cập nhật Gift Code thành công và đồng bộ json/${currentTable}/giftcode.json lên GitHub!`
           });
         }
         else if (action === "delete_gift_key") {
+          await ensureDbSchema(env);
           await env.DB.prepare("DELETE FROM gift_keys WHERE id = ?").bind(body.id).run();
 
-          const gitRes = await syncGiftCodeToGitHub(env);
+          const gitRes = await syncGiftCodeToGitHub(env, currentTable);
           if (!gitRes.success) {
             return jsonResponse({
               success: false,
@@ -470,24 +614,32 @@ export default {
 
           return jsonResponse({
             success: true,
-            message: "Đã xóa Gift Code thành công và cập nhật json/giftcode.json lên GitHub!"
+            message: `Đã xóa Gift Code thành công và cập nhật json/${currentTable}/giftcode.json lên GitHub!`
           });
         }
         else if (action === "sync_gift_code") {
-          const gitRes = await syncGiftCodeToGitHub(env);
+          await ensureDbSchema(env);
+          const gitRes = await syncGiftCodeToGitHub(env, currentTable);
           if (gitRes && gitRes.success) {
-            return jsonResponse({ success: true, message: "Đã lưu json/giftcode.json lên GitHub thành công!" });
+            return jsonResponse({ success: true, message: `Đã lưu json/${currentTable}/giftcode.json lên GitHub thành công!` });
           } else {
             return jsonResponse({ success: false, error: gitRes ? gitRes.error : "Lỗi không xác định" });
           }
         }
-        else if (action === "add_rom") {
+
+        // =====================================================================
+        // THAO TÁC SẢN PHẨM (PRODUCT CATEGORIES)
+        // =====================================================================
+        else if (action === "add_rom" || action === "add_product_category") {
           const { name } = body;
           if (!name) return jsonResponse({ error: "Tên Sản phẩm không được để trống" }, 400);
-          await env.DB.prepare("INSERT OR IGNORE INTO rom_categories (name) VALUES (?)").bind(name.trim()).run();
+          await ensureDbSchema(env);
+          await env.DB.prepare("INSERT OR IGNORE INTO product_categories (name, license_table) VALUES (?, ?)").bind(name.trim(), currentTable).run();
+          return jsonResponse({ success: true, message: `Đã thêm sản phẩm "${name}" thành công!` });
         }
-        else if (action === "delete_rom") {
-          await env.DB.prepare("DELETE FROM rom_categories WHERE name = ?").bind(body.name).run();
+        else if (action === "delete_rom" || action === "delete_product_category") {
+          await ensureDbSchema(env);
+          await env.DB.prepare("DELETE FROM product_categories WHERE name = ? AND license_table = ?").bind(body.name, currentTable).run();
           return jsonResponse({ success: true, message: `Đã xóa Sản phẩm "${body.name}" thành công!` });
         }
         else if (action === "bulk_delete_roms") {
@@ -500,7 +652,7 @@ export default {
           for (let i = 0; i < names.length; i += CHUNK_SIZE) {
             const chunk = names.slice(i, i + CHUNK_SIZE);
             const placeholders = chunk.map(() => "?").join(",");
-            await env.DB.prepare(`DELETE FROM rom_categories WHERE name IN (${placeholders})`).bind(...chunk).run();
+            await env.DB.prepare(`DELETE FROM product_categories WHERE license_table = ? AND name IN (${placeholders})`).bind(currentTable, ...chunk).run();
           }
           return jsonResponse({ success: true, count: names.length, message: `Đã xóa thành công ${names.length} Sản phẩm!` });
         }
@@ -517,16 +669,16 @@ export default {
           for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
             const chunkIds = ids.slice(i, i + CHUNK_SIZE);
             const placeholders = chunkIds.map(() => "?").join(",");
-            const oldItems = await env.DB.prepare(`SELECT serial, prefix FROM licenses WHERE id IN (${placeholders})`).bind(...chunkIds).all();
+            const oldItems = await env.DB.prepare(`SELECT serial, prefix FROM "${actualTable}" WHERE id IN (${placeholders})`).bind(...chunkIds).all();
             (oldItems.results || []).forEach(row => {
               const p = row.prefix || getDevicePrefix(row.serial);
               if (p) affectedPrefixes.add(p);
             });
-            await env.DB.prepare(`DELETE FROM licenses WHERE id IN (${placeholders})`).bind(...chunkIds).run();
+            await env.DB.prepare(`DELETE FROM "${actualTable}" WHERE id IN (${placeholders})`).bind(...chunkIds).run();
           }
 
           const delPrefixesList = Array.from(affectedPrefixes).sort();
-          const gitRes = await syncShardsBlockToGitHub(env, delPrefixesList, `Xóa ${ids.length} thiết bị (${delPrefixesList.length} shards)`);
+          const gitRes = await syncShardsBlockToGitHub(env, delPrefixesList, `Xóa ${ids.length} thiết bị (${delPrefixesList.length} shards)`, currentTable);
 
           if (!gitRes.success) {
             return jsonResponse({
@@ -561,7 +713,7 @@ export default {
 
             stmts.push(
               env.DB.prepare(
-                `UPDATE licenses SET serial = ?, rom_version = ?, key_status = ?, email_phone = ?, country = ?, gmail_notify = ?, note = ?, prefix = ? WHERE id = ?`
+                `UPDATE "${actualTable}" SET serial = ?, rom_version = ?, key_status = ?, email_phone = ?, country = ?, gmail_notify = ?, note = ?, prefix = ? WHERE id = ?`
               ).bind(
                 cleanSerial,
                 it.rom_version.trim(),
@@ -579,7 +731,7 @@ export default {
           await executeDbBatch(env.DB, stmts);
 
           const updatePrefixesList = Array.from(affectedPrefixes).sort();
-          const gitRes = await syncShardsBlockToGitHub(env, updatePrefixesList, `Cập nhật ${stmts.length} thiết bị (${updatePrefixesList.length} shards)`);
+          const gitRes = await syncShardsBlockToGitHub(env, updatePrefixesList, `Cập nhật ${stmts.length} thiết bị (${updatePrefixesList.length} shards)`, currentTable);
 
           if (!gitRes.success) {
             return jsonResponse({
@@ -602,7 +754,7 @@ export default {
           }
           await ensureDbSchema(env);
 
-          const existingRes = await env.DB.prepare("SELECT serial, rom_version FROM licenses").all();
+          const existingRes = await env.DB.prepare(`SELECT serial, rom_version FROM "${actualTable}"`).all();
           const existingSet = new Set((existingRes.results || []).map(r => `${(r.serial || '').trim()}_${(r.rom_version || '').trim()}`));
 
           const affectedPrefixes = new Set();
@@ -628,7 +780,7 @@ export default {
 
             stmts.push(
               env.DB.prepare(
-                `INSERT INTO licenses (serial, rom_version, key_status, email_phone, country, gmail_notify, note, created_at, prefix)
+                `INSERT INTO "${actualTable}" (serial, rom_version, key_status, email_phone, country, gmail_notify, note, created_at, prefix)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
               ).bind(
                 s,
@@ -646,9 +798,8 @@ export default {
 
           await executeDbBatch(env.DB, stmts);
 
-          // Nếu có mục mới, đồng bộ các prefix mới. Nếu toàn bộ bị trùng (ví dụ upload lại để fix file json), đồng bộ tất cả prefix có trong file!
           const prefixesToSync = (affectedPrefixes.size > 0 ? Array.from(affectedPrefixes) : Array.from(allUploadedPrefixes)).sort();
-          const gitRes = await syncShardsBlockToGitHub(env, prefixesToSync, `Nhập ${stmts.length} thiết bị từ Excel (${prefixesToSync.length} shards)`);
+          const gitRes = await syncShardsBlockToGitHub(env, prefixesToSync, `Nhập ${stmts.length} thiết bị từ Excel (${prefixesToSync.length} shards)`, currentTable);
 
           if (!gitRes.success) {
             return jsonResponse({
@@ -680,7 +831,7 @@ export default {
             await env.DB.prepare(`DELETE FROM gift_keys WHERE id IN (${placeholders})`).bind(...chunk).run();
           }
 
-          const gitRes = await syncGiftCodeToGitHub(env);
+          const gitRes = await syncGiftCodeToGitHub(env, currentTable);
           if (!gitRes.success) {
             return jsonResponse({
               success: false,
@@ -710,7 +861,7 @@ export default {
             );
           }
           await executeDbBatch(env.DB, stmts);
-          const gitRes = await syncGiftCodeToGitHub(env);
+          const gitRes = await syncGiftCodeToGitHub(env, currentTable);
           if (!gitRes.success) {
             return jsonResponse({
               success: false,
@@ -729,7 +880,7 @@ export default {
           const stmts = [];
           const uniqueNames = new Set(names.map(n => String(n).trim()).filter(Boolean));
           for (const name of uniqueNames) {
-            stmts.push(env.DB.prepare("INSERT OR IGNORE INTO rom_categories (name) VALUES (?)").bind(name));
+            stmts.push(env.DB.prepare("INSERT OR IGNORE INTO product_categories (name, license_table) VALUES (?, ?)").bind(name, currentTable));
           }
           await executeDbBatch(env.DB, stmts);
           return jsonResponse({ success: true, count: stmts.length, message: `Đã thêm thành công ${stmts.length} sản phẩm!` });
@@ -746,15 +897,13 @@ export default {
         else if (action === "resend_mail") {
           const isAuto = !!body.is_auto;
 
-          // Nếu là lệnh tự động gửi sau 60s, kiểm tra khóa nguyên tử chống gửi trùng lặp giữa nhiều máy mở web cùng lúc
           if (isAuto) {
             const lockRes = await env.DB.prepare(
-              "UPDATE licenses SET gmail_notify = 'SENDING' WHERE id = ? AND gmail_notify = 'NONE' AND key_status = 'OK'"
+              `UPDATE "${actualTable}" SET gmail_notify = 'SENDING' WHERE id = ? AND gmail_notify = 'NONE' AND key_status = 'OK'`
             ).bind(body.id).run();
 
             if (!lockRes.meta || lockRes.meta.changes === 0) {
-              // Máy khác hoặc Server ngầm đã xử lý trước đó rồi
-              const currentItem = await env.DB.prepare("SELECT gmail_notify FROM licenses WHERE id = ?").bind(body.id).first();
+              const currentItem = await env.DB.prepare(`SELECT gmail_notify FROM "${actualTable}" WHERE id = ?`).bind(body.id).first();
               return jsonResponse({
                 success: true,
                 already_handled: true,
@@ -763,10 +912,10 @@ export default {
             }
           }
 
-          const item = await env.DB.prepare("SELECT * FROM licenses WHERE id = ?").bind(body.id).first();
+          const item = await env.DB.prepare(`SELECT * FROM "${actualTable}" WHERE id = ?`).bind(body.id).first();
           if (!item || !item.email_phone || !item.email_phone.includes("@")) {
             if (isAuto) {
-              await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(body.id).run();
+              await env.DB.prepare(`UPDATE "${actualTable}" SET gmail_notify = 'ERROR' WHERE id = ?`).bind(body.id).run();
             }
             return jsonResponse({ success: false, error: "Email không hợp lệ" }, 400);
           }
@@ -793,16 +942,16 @@ export default {
             try { gasJson = JSON.parse(gasText); } catch (err) { }
 
             if (gasJson.success) {
-              await env.DB.prepare("UPDATE licenses SET gmail_notify = 'OK' WHERE id = ?").bind(item.id).run();
+              await env.DB.prepare(`UPDATE "${actualTable}" SET gmail_notify = 'OK' WHERE id = ?`).bind(item.id).run();
               await bumpDbVersion(env);
               return jsonResponse({ success: true, ref_id: gasJson.ref_id });
             } else {
-              await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(item.id).run();
+              await env.DB.prepare(`UPDATE "${actualTable}" SET gmail_notify = 'ERROR' WHERE id = ?`).bind(item.id).run();
               await bumpDbVersion(env);
               return jsonResponse({ success: false, error: gasJson.error || gasText });
             }
           } catch (callErr) {
-            await env.DB.prepare("UPDATE licenses SET gmail_notify = 'ERROR' WHERE id = ?").bind(item.id).run();
+            await env.DB.prepare(`UPDATE "${actualTable}" SET gmail_notify = 'ERROR' WHERE id = ?`).bind(item.id).run();
             await bumpDbVersion(env);
             return jsonResponse({ success: false, error: "Không kết nối được tới Google Apps Script: " + callErr.message }, 500);
           }
@@ -919,12 +1068,38 @@ async function executeDbBatch(db, stmts, chunkSize = 100) {
   }
 }
 
+function sanitizeLicenseName(name) {
+  if (!name) return "";
+  let clean = String(name).trim().replace(/[^a-zA-Z0-9_\-]/g, "");
+  if (clean.toLowerCase().endsWith("_license")) {
+    clean = clean.slice(0, -8);
+  }
+  return clean;
+}
+
+function getActualTableName(shortName) {
+  const clean = sanitizeLicenseName(shortName) || "androidtv-x86";
+  return `${clean}_license`;
+}
+
 async function ensureDbSchema(env) {
   if (schemaChecked || !env?.DB) return;
 
   try {
+    // 1. Kiểm tra migration licenses -> androidtv-x86_license
+    const checkLicenses = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='licenses'").first();
+    const checkNewLic = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='androidtv-x86_license'").first();
+    if (checkLicenses && !checkNewLic) {
+      try {
+        await env.DB.prepare('ALTER TABLE licenses RENAME TO "androidtv-x86_license"').run();
+      } catch (mErr) {
+        console.error("Lỗi đổi tên licenses:", mErr);
+      }
+    }
+
+    // Đảm bảo bảng androidtv-x86_license tồn tại
     await env.DB.prepare(`
-      CREATE TABLE IF NOT EXISTS licenses (
+      CREATE TABLE IF NOT EXISTS "androidtv-x86_license" (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         serial TEXT NOT NULL,
         rom_version TEXT NOT NULL,
@@ -937,18 +1112,43 @@ async function ensureDbSchema(env) {
         prefix TEXT
       )
     `).run();
-    await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_licenses_prefix ON licenses(prefix)").run();
-    await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_licenses_serial_rom ON licenses(serial, rom_version)").run();
+    await env.DB.prepare(`CREATE INDEX IF NOT EXISTS "idx_androidtv-x86_prefix" ON "androidtv-x86_license"(prefix)`).run();
+    await env.DB.prepare(`CREATE INDEX IF NOT EXISTS "idx_androidtv-x86_serial_rom" ON "androidtv-x86_license"(serial, rom_version)`).run();
   } catch (e) {
-    // Bỏ qua lỗi tạo bảng licenses
+    // Bỏ qua lỗi
   }
 
-  // Đảm bảo các cột mới luôn tồn tại trên các CSDL đã tạo trước đó
-  try { await env.DB.prepare("ALTER TABLE licenses ADD COLUMN prefix TEXT").run(); } catch (_) { }
-  try { await env.DB.prepare("ALTER TABLE licenses ADD COLUMN note TEXT").run(); } catch (_) { }
-  try { await env.DB.prepare("ALTER TABLE licenses ADD COLUMN gmail_notify TEXT DEFAULT 'NONE'").run(); } catch (_) { }
-  try { await env.DB.prepare("ALTER TABLE licenses ADD COLUMN created_at INTEGER").run(); } catch (_) { }
+  // Đảm bảo các cột mới luôn tồn tại trên androidtv-x86_license
+  try { await env.DB.prepare(`ALTER TABLE "androidtv-x86_license" ADD COLUMN prefix TEXT`).run(); } catch (_) { }
+  try { await env.DB.prepare(`ALTER TABLE "androidtv-x86_license" ADD COLUMN note TEXT`).run(); } catch (_) { }
+  try { await env.DB.prepare(`ALTER TABLE "androidtv-x86_license" ADD COLUMN gmail_notify TEXT DEFAULT 'NONE'`).run(); } catch (_) { }
+  try { await env.DB.prepare(`ALTER TABLE "androidtv-x86_license" ADD COLUMN created_at INTEGER`).run(); } catch (_) { }
 
+  // 2. Kiểm tra migration rom_categories -> product_categories
+  try {
+    const checkRom = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='rom_categories'").first();
+    const checkProd = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='product_categories'").first();
+    if (checkRom && !checkProd) {
+      try {
+        await env.DB.prepare("ALTER TABLE rom_categories RENAME TO product_categories").run();
+      } catch (mErr) {
+        console.error("Lỗi đổi tên rom_categories:", mErr);
+      }
+    }
+
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS product_categories (
+        name TEXT,
+        license_table TEXT DEFAULT 'androidtv-x86',
+        PRIMARY KEY (name, license_table)
+      )
+    `).run();
+  } catch (e) { }
+
+  try { await env.DB.prepare("ALTER TABLE product_categories ADD COLUMN license_table TEXT DEFAULT 'androidtv-x86'").run(); } catch (_) { }
+  try { await env.DB.prepare("UPDATE product_categories SET license_table = 'androidtv-x86' WHERE license_table IS NULL OR license_table = ''").run(); } catch (_) { }
+
+  // 3. Đảm bảo bảng gift_keys có cột license_table
   try {
     await env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS gift_keys (
@@ -958,25 +1158,39 @@ async function ensureDbSchema(env) {
         expiration_date TEXT NOT NULL,
         extend INTEGER DEFAULT 7,
         note TEXT,
-        created_at INTEGER
+        created_at INTEGER,
+        license_table TEXT DEFAULT 'androidtv-x86'
       )
     `).run();
     await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_gift_keys_code ON gift_keys(gift_code)").run();
-  } catch (e) {
-    // Bỏ qua lỗi tạo bảng gift_keys
-  }
-  try { await env.DB.prepare("ALTER TABLE gift_keys ADD COLUMN extend INTEGER DEFAULT 7").run(); } catch (_) { }
+  } catch (e) { }
 
+  try { await env.DB.prepare("ALTER TABLE gift_keys ADD COLUMN extend INTEGER DEFAULT 7").run(); } catch (_) { }
+  try { await env.DB.prepare("ALTER TABLE gift_keys ADD COLUMN license_table TEXT DEFAULT 'androidtv-x86'").run(); } catch (_) { }
+  try { await env.DB.prepare("UPDATE gift_keys SET license_table = 'androidtv-x86' WHERE license_table IS NULL OR license_table = ''").run(); } catch (_) { }
+
+  // 4. Bảng danh bạ các bảng bản quyền license_registries
   try {
     await env.DB.prepare(`
-      CREATE TABLE IF NOT EXISTS rom_categories (
-        name TEXT PRIMARY KEY
+      CREATE TABLE IF NOT EXISTS license_registries (
+        table_name TEXT PRIMARY KEY,
+        display_name TEXT,
+        created_at INTEGER
       )
     `).run();
-  } catch (e) {
-    // Bỏ qua lỗi tạo bảng rom_categories
-  }
+    await env.DB.prepare("INSERT OR IGNORE INTO license_registries (table_name, display_name, created_at) VALUES ('androidtv-x86', 'androidtv-x86', ?)").bind(Date.now()).run();
 
+    // Tự động quét và đăng ký tất cả các bảng *_license hiện có trong D1
+    const allLicTables = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%_license'").all();
+    for (const row of (allLicTables.results || [])) {
+      const sName = sanitizeLicenseName(row.name);
+      if (sName) {
+        await env.DB.prepare("INSERT OR IGNORE INTO license_registries (table_name, display_name, created_at) VALUES (?, ?, ?)").bind(sName, sName, Date.now()).run();
+      }
+    }
+  } catch (e) { }
+
+  // 5. Bảng system_stats
   try {
     await env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS system_stats (
@@ -986,9 +1200,7 @@ async function ensureDbSchema(env) {
         PRIMARY KEY (date_key, service_type)
       )
     `).run();
-  } catch (e) {
-    // Bỏ qua lỗi tạo bảng system_stats
-  }
+  } catch (e) { }
 
   schemaChecked = true;
 }
@@ -1038,13 +1250,17 @@ async function commitFilesToGitHubBlock(env, filesArray, commitMessage) {
       const latestCommitSha = branchData.commit.sha;
       const baseTreeSha = branchData.commit.commit.tree.sha;
 
-      // 2. Tạo Git Tree chứa block tất cả các file cần cập nhật
-      const treeItems = filesArray.map(f => ({
-        path: f.path,
-        mode: "100644",
-        type: "blob",
-        content: f.content
-      }));
+      // 2. Tạo Git Tree chứa block tất cả các file cần cập nhật/xóa
+      const treeItems = filesArray.map(f => {
+        const item = {
+          path: f.path,
+          mode: "100644",
+          type: "blob"
+        };
+        if (f.content !== undefined) item.content = f.content;
+        if (f.sha !== undefined) item.sha = f.sha;
+        return item;
+      });
 
       const treeRes = await fetch(`https://api.github.com/repos/${cleanRepo}/git/trees`, {
         method: "POST",
@@ -1114,13 +1330,11 @@ async function commitFilesToGitHubBlock(env, filesArray, commitMessage) {
       console.warn(`Lần thử ${attempt}/${MAX_ATTEMPTS} đồng bộ GitHub thất bại:`, lastError);
 
       if (attempt < MAX_ATTEMPTS) {
-        // Đợi 1.5s trước khi thử lại
         await new Promise(r => setTimeout(r, 1500));
       }
     }
   }
 
-  // Cả 3 lần đều không thành công -> Báo lỗi hoàn toàn
   return {
     success: false,
     count: filesArray.length,
@@ -1129,9 +1343,60 @@ async function commitFilesToGitHubBlock(env, filesArray, commitMessage) {
 }
 
 /**
- * Gom toàn bộ các shard tiền tố được chỉ định vào 1 block và đồng bộ 1 lần duy nhất lên GitHub
+ * Đổi tên thư mục json/<oldFolder> sang json/<newFolder> trên GitHub
  */
-async function syncShardsBlockToGitHub(env, prefixes, customMessage) {
+async function renameGitHubFolder(env, oldFolder, newFolder) {
+  const token = env?.GITHUB_TOKEN ? String(env.GITHUB_TOKEN).trim() : null;
+  const rawRepo = env?.GITHUB_REPO ? String(env.GITHUB_REPO).trim() : null;
+  const branch = env?.GITHUB_BRANCH ? String(env.GITHUB_BRANCH).trim() : "main";
+  if (!token || !rawRepo) return { success: true, message: "Không cấu hình GitHub, bỏ qua." };
+
+  const cleanRepo = rawRepo.replace(/^https?:\/\/github\.com\//i, "").replace(/^\/+|\/+$/g, "");
+  const headers = {
+    "Authorization": `Bearer ${token}`,
+    "Accept": "application/vnd.github+json",
+    "User-Agent": "MRD-Cloudflare-Pages"
+  };
+
+  try {
+    const branchRes = await fetch(`https://api.github.com/repos/${cleanRepo}/branches/${branch}`, { headers });
+    if (!branchRes.ok) return { success: true };
+    const branchData = await branchRes.json();
+    const baseTreeSha = branchData.commit.commit.tree.sha;
+
+    const treeRes = await fetch(`https://api.github.com/repos/${cleanRepo}/git/trees/${baseTreeSha}?recursive=1`, { headers });
+    if (!treeRes.ok) return { success: true };
+    const treeData = await treeRes.json();
+
+    const oldPrefix = `json/${oldFolder}/`;
+    const filesToMove = (treeData.tree || []).filter(item => item.type === "blob" && item.path.startsWith(oldPrefix));
+    if (filesToMove.length === 0) return { success: true };
+
+    const filesToCommit = [];
+    for (const f of filesToMove) {
+      const relPath = f.path.substring(oldPrefix.length);
+      filesToCommit.push({
+        path: `json/${newFolder}/${relPath}`,
+        sha: f.sha
+      });
+      filesToCommit.push({
+        path: f.path,
+        sha: null
+      });
+    }
+
+    return await commitFilesToGitHubBlock(env, filesToCommit, `Rename folder json/${oldFolder} to json/${newFolder}`);
+  } catch (err) {
+    console.error("Lỗi đổi tên folder GitHub:", err);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Gom toàn bộ các shard tiền tố được chỉ định vào 1 block và đồng bộ 1 lần duy nhất lên GitHub
+ * Tự động phân thư mục theo tên bảng bản quyền: json/<licenseShortName>/<prefix>.json
+ */
+async function syncShardsBlockToGitHub(env, prefixes, customMessage, licenseShortName) {
   if (!prefixes) return { success: true, count: 0 };
   const list = Array.from(new Set(Array.isArray(prefixes) ? prefixes : [prefixes]))
     .map(p => String(p ?? "").trim().toLowerCase())
@@ -1139,11 +1404,13 @@ async function syncShardsBlockToGitHub(env, prefixes, customMessage) {
 
   if (list.length === 0) return { success: true, count: 0 };
 
+  const targetShortName = sanitizeLicenseName(licenseShortName) || "androidtv-x86";
+  const actualTable = `${targetShortName}_license`;
+
   try {
     const filesToCommit = [];
     const xorKey = env?.XOR_KEY;
 
-    // Lấy dữ liệu licenses của toàn bộ các prefix cần đồng bộ trong các mẻ batch (tối đa 50 prefix/truy vấn)
     const prefixMap = new Map();
     for (const prefix of list) {
       prefixMap.set(prefix, []);
@@ -1154,7 +1421,7 @@ async function syncShardsBlockToGitHub(env, prefixes, customMessage) {
       const chunkPrefixes = list.slice(i, i + CHUNK_SIZE);
       const placeholders = chunkPrefixes.map(() => "?").join(",");
       const { results } = await env.DB.prepare(
-        `SELECT prefix, serial, rom_version, key_status FROM licenses WHERE prefix IN (${placeholders})`
+        `SELECT prefix, serial, rom_version, key_status FROM "${actualTable}" WHERE prefix IN (${placeholders})`
       ).bind(...chunkPrefixes).all();
 
       for (const row of (results || [])) {
@@ -1167,8 +1434,6 @@ async function syncShardsBlockToGitHub(env, prefixes, customMessage) {
 
     for (const prefix of list) {
       const records = prefixMap.get(prefix) || [];
-
-      // Format: SERIAL:ROM_VERSION:KEY_STATUS -> XOR encrypt với khóa env.XOR_KEY -> Hex
       const encryptedList = records.map(r => {
         const raw = `${r.serial}:${r.rom_version}:${r.key_status}`;
         return xorEncryptHex(raw, xorKey);
@@ -1176,7 +1441,7 @@ async function syncShardsBlockToGitHub(env, prefixes, customMessage) {
 
       const fileContent = JSON.stringify(encryptedList, null, 2);
       filesToCommit.push({
-        path: `json/${prefix}.json`,
+        path: `json/${targetShortName}/${prefix}.json`,
         content: fileContent
       });
     }
@@ -1189,18 +1454,17 @@ async function syncShardsBlockToGitHub(env, prefixes, customMessage) {
 }
 
 /**
- * Đồng bộ file json/giftcode.json lên GitHub
- * Chỉ lưu các Gift Code còn hiệu lực (OK), tự động loại bỏ các mã đã hết hạn (BLOCK) để tệp siêu nhẹ
+ * Đồng bộ file json/<licenseShortName>/giftcode.json lên GitHub
  */
-async function syncGiftCodeToGitHub(env) {
+async function syncGiftCodeToGitHub(env, licenseShortName) {
   try {
     const today = new Date().toISOString().split("T")[0];
     const xorKey = env?.XOR_KEY;
+    const targetShortName = sanitizeLicenseName(licenseShortName) || "androidtv-x86";
 
-    // Lọc trực tiếp từ CSDL: chỉ lấy các gift code còn hạn dùng (>= ngày hôm nay)
     const { results } = await env.DB.prepare(
-      "SELECT gift_code, start_date, expiration_date, extend FROM gift_keys WHERE expiration_date >= ? ORDER BY created_at DESC"
-    ).bind(today).all();
+      "SELECT gift_code, start_date, expiration_date, extend FROM gift_keys WHERE license_table = ? AND expiration_date >= ? ORDER BY created_at DESC"
+    ).bind(targetShortName, today).all();
 
     const records = (results || []).map(r => {
       const extendVal = r.extend != null ? Number(r.extend) : 7;
@@ -1211,12 +1475,11 @@ async function syncGiftCodeToGitHub(env) {
       };
     });
 
-    // Lưu Gift Code dạng JSON sạch không mã hóa, siêu nhẹ cho Android
     const fileContent = JSON.stringify(records, null, 2);
     return await commitFilesToGitHubBlock(env, [{
-      path: "json/giftcode.json",
+      path: `json/${targetShortName}/giftcode.json`,
       content: fileContent
-    }], "Sync json/giftcode.json via MRD License Admin [skip ci]");
+    }], `Sync json/${targetShortName}/giftcode.json via MRD License Admin [skip ci]`);
   } catch (err) {
     console.error("Lỗi ngoại lệ syncGiftCodeToGitHub:", err.message);
     return { success: false, error: err.message };

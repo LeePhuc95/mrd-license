@@ -1723,6 +1723,15 @@
       <span style="font-size: 14px; cursor: pointer; color: var(--text-muted); display: none;" id="closeSidebarBtn"
         onclick="toggleSidebar(false)">✕</span>
     </div>
+
+    <!-- DROPDOWN CHỌN BẢNG BẢN QUYỀN -->
+    <div style="padding: 0 16px 12px 16px;">
+      <label for="licenseTableSelect" style="display: block; font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700; margin-bottom: 6px; letter-spacing: 0.5px;">📦 Bảng bản quyền</label>
+      <select id="licenseTableSelect" onchange="switchLicenseTable(this.value)" style="width: 100%; background: #22222b; border: 1px solid rgba(255,255,255,0.15); color: #64b5f6; padding: 7px 10px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; outline: none;">
+        <option value="androidtv-x86">androidtv-x86</option>
+      </select>
+    </div>
+
     <ul class="nav-list">
       <li class="nav-item active" onclick="switchTab('listTab', this)">🔑 Kích hoạt</li>
       <li class="nav-item" onclick="switchTab('giftTab', this)">🎁 Gift Code</li>
@@ -1969,7 +1978,7 @@
           <div class="tab-header-actions">
             <a id="giftShardBadgeLink" href="/json/giftcode.json" target="_blank"
               title="Mở file JSON RAW trên GitHub Repo" style="text-decoration:none;">
-              <span class="badge badge-shard"
+              <span id="giftShardBadgeText" class="badge badge-shard"
                 style="padding: 7px 14px; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; cursor: pointer; width: 100%;">json/giftcode.json</span>
             </a>
             <button class="btn btn-green" style="padding: 7px 14px; font-size: 12px;" onclick="openCreateGiftModal()">+
@@ -2043,6 +2052,32 @@
 
     <!-- TAB 4: CÀI ĐẶT HỆ THỐNG -->
     <div id="settingsTab" class="tab-content">
+      <!-- CARD QUẢN LÝ BẢNG BẢN QUYỀN -->
+      <div class="card" style="max-width: 650px; margin: 0 auto 20px auto;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">
+          <h3 style="margin: 0; font-size: 16px; font-weight: 700;">📦 Quản lý Bảng Bản Quyền</h3>
+          <span id="currentTableBadge" class="badge" style="background: rgba(33, 150, 243, 0.2); color: #64b5f6; font-size: 13px; padding: 4px 10px; border-radius: 6px; font-weight: 700;">androidtv-x86</span>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 14px;">
+          <div style="font-size: 13px; color: var(--text-muted); line-height: 1.5;">
+            Quản trị các bảng bản quyền độc lập. Tên bảng trong D1 có dạng <code>&lt;tên&gt;_license</code>. Mọi dữ liệu JSON được tự động lưu vào thư mục <code>/json/&lt;tên_bảng&gt;/</code> trên GitHub Repo.
+          </div>
+
+          <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px;">
+            <button type="button" class="btn btn-green" onclick="handleCreateLicenseTable()" style="padding: 8px 16px; font-size: 13px;">
+              ➕ Tạo bảng bản quyền mới
+            </button>
+            <button type="button" class="btn btn-blue" onclick="handleRenameLicenseTable()" style="padding: 8px 16px; font-size: 13px;">
+              ✏️ Đổi tên bảng hiện tại
+            </button>
+            <button type="button" class="btn btn-red" onclick="handleDeleteLicenseTable()" style="padding: 8px 16px; font-size: 13px;">
+              🗑️ Xóa bảng hiện tại
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div class="card" style="max-width: 650px; margin: 0 auto 20px auto;">
         <div
           style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">
@@ -2383,7 +2418,11 @@
     try {
       currentAuthToken = sessionStorage.getItem("mrd_admin_session_token") || "";
     } catch (_) { }
-    let systemData = { licenses: [], rom_categories: [], gift_keys: [] };
+    let currentLicenseTable = "androidtv-x86";
+    try {
+      currentLicenseTable = localStorage.getItem("mrd_selected_license_table") || "androidtv-x86";
+    } catch (_) { }
+    let systemData = { licenses: [], rom_categories: [], gift_keys: [], license_tables: ["androidtv-x86"], current_table: "androidtv-x86" };
     let currentSelectedItem = null;
 
     // Chuẩn hóa và chặn gõ dấu tiếng Việt / khoảng trắng cho Serial và GiftCode
@@ -2709,9 +2748,111 @@
       if (window.innerWidth <= 768) toggleSidebar(false);
     }
 
+    function renderLicenseTableSelector() {
+      const sel = document.getElementById("licenseTableSelect");
+      const badge = document.getElementById("currentTableBadge");
+      if (badge) badge.innerText = currentLicenseTable;
+      if (!sel) return;
+
+      const tables = systemData.license_tables && systemData.license_tables.length > 0
+        ? systemData.license_tables
+        : [currentLicenseTable];
+
+      sel.innerHTML = tables.map(function (t) {
+        return '<option value="' + t + '"' + (t === currentLicenseTable ? ' selected' : '') + '>' + t + '</option>';
+      }).join("");
+    }
+
+    async function switchLicenseTable(newTable) {
+      if (!newTable || newTable === currentLicenseTable) return;
+      currentLicenseTable = newTable;
+      try {
+        localStorage.setItem("mrd_selected_license_table", newTable);
+      } catch (_) { }
+      await loadAllData();
+      showToast("Đã chuyển sang bảng: " + newTable, "info");
+    }
+
+    async function handleCreateLicenseTable() {
+      const name = prompt("Nhập tên bảng bản quyền mới (tên trong D1 sẽ là <tên>_license):");
+      if (name === null) return;
+      const cleanName = name.trim().replace(/[^a-zA-Z0-9_\-]/g, "");
+      if (!cleanName) {
+        return alert("Tên bảng không hợp lệ! Chỉ cho phép dùng chữ cái, số, gạch nối (-) hoặc gạch dưới (_).");
+      }
+
+      if (!confirm("Sau khi tạo không thể xóa bảng, đồng ý tạo?")) {
+        return;
+      }
+
+      const res = await sendAdminAction({ action: "create_license_table", name: cleanName }, "Đang tạo bảng bản quyền mới...");
+      if (res && res.success) {
+        showToast(res.message, "success");
+        currentLicenseTable = res.table_name || cleanName;
+        try { localStorage.setItem("mrd_selected_license_table", currentLicenseTable); } catch (_) { }
+        await loadAllData();
+      } else {
+        alert("Lỗi tạo bảng: " + ((res && res.error) || "Không thể tạo bảng"));
+      }
+    }
+
+    async function handleRenameLicenseTable() {
+      const newName = prompt("Nhập tên mới cho Bảng bản quyền hiện tại (" + currentLicenseTable + "):\n(Lưu ý: Thư mục trên GitHub sẽ được đổi tên tương ứng)", currentLicenseTable);
+      if (newName === null) return;
+      const cleanNew = newName.trim().replace(/[^a-zA-Z0-9_\-]/g, "");
+      if (!cleanNew) {
+        return alert("Tên bảng mới không hợp lệ!");
+      }
+      if (cleanNew === currentLicenseTable) return;
+
+      if (!confirm("Bạn có chắc chắn muốn đổi tên bảng '" + currentLicenseTable + "' thành '" + cleanNew + "'?")) {
+        return;
+      }
+
+      const res = await sendAdminAction({
+        action: "rename_license_table",
+        old_name: currentLicenseTable,
+        new_name: cleanNew
+      }, "Đang đổi tên bảng và cập nhật GitHub...");
+
+      if (res && res.success) {
+        showToast(res.message, "success");
+        currentLicenseTable = res.new_name || cleanNew;
+        try { localStorage.setItem("mrd_selected_license_table", currentLicenseTable); } catch (_) { }
+        await loadAllData();
+      } else {
+        alert("Lỗi đổi tên: " + ((res && res.error) || "Không thể đổi tên bảng"));
+      }
+    }
+
+    async function handleDeleteLicenseTable() {
+      const count = (systemData.licenses || []).length;
+      if (count > 0) {
+        return alert("Bảng còn chứa " + count + " thiết bị bản quyền, không thể xóa! Vui lòng xóa hết bản quyền trong bảng trước khi xóa bảng.");
+      }
+
+      if (!confirm("Bảng hiện đang trống. Lưu ý: các sản phẩm và gift code thuộc bảng này sẽ tự động bị xóa! Bạn có chắc chắn muốn xóa bảng '" + currentLicenseTable + "' không?")) {
+        return;
+      }
+
+      const res = await sendAdminAction({
+        action: "delete_license_table",
+        name: currentLicenseTable
+      }, "Đang xóa bảng bản quyền...");
+
+      if (res && res.success) {
+        showToast(res.message, "success");
+        currentLicenseTable = "androidtv-x86";
+        try { localStorage.setItem("mrd_selected_license_table", currentLicenseTable); } catch (_) { }
+        await loadAllData();
+      } else {
+        alert("Lỗi xóa bảng: " + ((res && res.error) || "Không thể xóa bảng"));
+      }
+    }
+
     async function loadAllData() {
       try {
-        const res = await fetch("/api/admin/init-data", {
+        const res = await fetch("/api/admin/init-data?table=" + encodeURIComponent(currentLicenseTable), {
           headers: { "Authorization": "Bearer " + currentAuthToken }
         });
         if (res.status === 401) return logout();
@@ -2720,6 +2861,15 @@
         if (systemData.error) {
           showToast(systemData.error, "warn");
         }
+
+        if (systemData.current_table) {
+          currentLicenseTable = systemData.current_table;
+          try {
+            localStorage.setItem("mrd_selected_license_table", currentLicenseTable);
+          } catch (_) { }
+        }
+
+        renderLicenseTableSelector();
 
         // Cập nhật trạng thái Cài đặt Hệ thống từ D1 Database lên giao diện
         const settingToggle = document.getElementById("settingAutoSendEmail");
@@ -3022,7 +3172,7 @@
         tbody.innerHTML = pageItems.map(function (item, index) {
           const stt = start + index + 1;
           const isSelected = selectedLicenseIds.has(item.id);
-          const linkHref = getGithubFileUrl("json/" + item.prefix + ".json");
+          const linkHref = getGithubFileUrl("json/" + currentLicenseTable + "/" + item.prefix + ".json");
           return '<tr onclick="openDetailModal(' + item.id + ')" style="' + (isSelected ? 'background: var(--table-hover);' : '') + '">' +
             '<td class="col-cb" onclick="event.stopPropagation()">' +
             '<input type="checkbox" ' + (isSelected ? 'checked' : '') + ' onchange="toggleLicenseItem(' + item.id + ', this.checked)">' +
@@ -3210,8 +3360,10 @@
 
       const badgeLink = document.getElementById("giftShardBadgeLink");
       if (badgeLink) {
-        badgeLink.href = getGithubFileUrl("json/giftcode.json");
-        badgeLink.title = "Mở file json/giftcode.json trên GitHub Repo";
+        badgeLink.href = getGithubFileUrl("json/" + currentLicenseTable + "/giftcode.json");
+        badgeLink.title = "Mở file json/" + currentLicenseTable + "/giftcode.json trên GitHub Repo";
+        const badgeSpan = document.getElementById("giftShardBadgeText");
+        if (badgeSpan) badgeSpan.innerText = "json/" + currentLicenseTable + "/giftcode.json";
       }
 
       const filtered = getFilteredGifts();
@@ -4136,7 +4288,7 @@
       if (!currentSelectedItem) return;
 
       const prefix = currentSelectedItem.prefix || "unk";
-      const rawUrl = getGithubFileUrl("json/" + prefix + ".json");
+      const rawUrl = getGithubFileUrl("json/" + currentLicenseTable + "/" + prefix + ".json");
       document.getElementById("editId").value = currentSelectedItem.id;
       const prefixLink = document.getElementById("editPrefixLink");
       const prefixText = document.getElementById("editPrefixText");
@@ -4145,7 +4297,7 @@
         prefixLink.title = "Mở file JSON RAW: " + rawUrl;
       }
       if (prefixText) {
-        prefixText.innerText = "json/" + prefix + ".json";
+        prefixText.innerText = "json/" + currentLicenseTable + "/" + prefix + ".json";
       }
       document.getElementById("editSerial").value = currentSelectedItem.serial;
       document.getElementById("editRomSelect").value = currentSelectedItem.rom_version;
@@ -4359,6 +4511,9 @@
     }
 
     async function sendAdminAction(payload, customLoadingText) {
+      if (payload && !payload.license_table) {
+        payload.license_table = currentLicenseTable;
+      }
       const isSilent = customLoadingText === false;
       if (!isSilent) {
         showActionLoader(customLoadingText || "Đang xử lý yêu cầu...");
