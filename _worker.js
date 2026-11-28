@@ -494,11 +494,14 @@ export default {
           try {
             const today = new Date().toISOString().split("T")[0];
             const giftRes = await env.DB.prepare(
-              "SELECT gift_code, start_date, expiration_date, extend FROM gift_keys WHERE license_table = ? AND expiration_date >= ? ORDER BY created_at DESC"
+              "SELECT gift_code, start_date, expiration_date, extend, serial FROM gift_keys WHERE license_table = ? AND expiration_date >= ? ORDER BY created_at DESC"
             ).bind(currentTable, today).all();
             const giftList = (giftRes?.results || []).map(r => {
               const extendVal = r.extend != null ? Number(r.extend) : 7;
-              const rawMeta = `${r.start_date}:${r.expiration_date}:${extendVal}`;
+              const cleanSerial = sanitizeCode(r.serial);
+              const rawMeta = cleanSerial
+                ? `${r.start_date}:${r.expiration_date}:${extendVal}:${cleanSerial}`
+                : `${r.start_date}:${r.expiration_date}:${extendVal}`;
               return {
                 gift_code: r.gift_code,
                 metadata: xorEncryptHex(rawMeta, xorKey)
@@ -529,6 +532,7 @@ export default {
         else if (action === "create_gift_key") {
           let { start_date, expiration_date, note, extend } = body;
           const gift_code = sanitizeCode(body.gift_code);
+          const serial = sanitizeCode(body.serial);
           start_date = normalizeDateStr(start_date);
           expiration_date = normalizeDateStr(expiration_date);
           const extendDays = Number(extend) > 0 ? Number(extend) : 7;
@@ -546,9 +550,9 @@ export default {
           }
 
           await env.DB.prepare(`
-            INSERT INTO gift_keys (gift_code, start_date, expiration_date, extend, note, created_at, license_table)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-          `).bind(gift_code, start_date, expiration_date, extendDays, note || '', Date.now(), currentTable).run();
+            INSERT INTO gift_keys (gift_code, start_date, expiration_date, extend, serial, note, created_at, license_table)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `).bind(gift_code, start_date, expiration_date, extendDays, serial, note || '', Date.now(), currentTable).run();
 
           const gitRes = await syncGiftCodeToGitHub(env, currentTable);
           if (!gitRes.success) {
@@ -566,6 +570,7 @@ export default {
         else if (action === "update_gift_key") {
           let { id, start_date, expiration_date, note, extend } = body;
           const gift_code = sanitizeCode(body.gift_code);
+          const serial = sanitizeCode(body.serial);
           start_date = normalizeDateStr(start_date);
           expiration_date = normalizeDateStr(expiration_date);
           const extendDays = Number(extend) > 0 ? Number(extend) : 7;
@@ -583,9 +588,9 @@ export default {
           }
 
           await env.DB.prepare(`
-            UPDATE gift_keys SET gift_code = ?, start_date = ?, expiration_date = ?, extend = ?, note = ?
+            UPDATE gift_keys SET gift_code = ?, start_date = ?, expiration_date = ?, extend = ?, serial = ?, note = ?
             WHERE id = ?
-          `).bind(gift_code, start_date, expiration_date, extendDays, note || '', id).run();
+          `).bind(gift_code, start_date, expiration_date, extendDays, serial, note || '', id).run();
 
           const gitRes = await syncGiftCodeToGitHub(env, currentTable);
           if (!gitRes.success) {
@@ -853,11 +858,12 @@ export default {
             const eDate = normalizeDateStr(it.expiration_date);
             if (!it.id || !it.gift_code || !sDate || !eDate) continue;
             const cleanGift = sanitizeCode(it.gift_code);
+            const cleanSerial = sanitizeCode(it.serial);
             const extendDays = Number(it.extend) > 0 ? Number(it.extend) : 7;
             stmts.push(
               env.DB.prepare(
-                `UPDATE gift_keys SET gift_code = ?, start_date = ?, expiration_date = ?, extend = ?, note = ? WHERE id = ?`
-              ).bind(cleanGift, sDate, eDate, extendDays, (it.note || '').trim(), Number(it.id))
+                `UPDATE gift_keys SET gift_code = ?, start_date = ?, expiration_date = ?, extend = ?, serial = ?, note = ? WHERE id = ?`
+              ).bind(cleanGift, sDate, eDate, extendDays, cleanSerial, (it.note || '').trim(), Number(it.id))
             );
           }
           await executeDbBatch(env.DB, stmts);
@@ -1157,6 +1163,7 @@ async function ensureDbSchema(env) {
         start_date TEXT NOT NULL,
         expiration_date TEXT NOT NULL,
         extend INTEGER DEFAULT 7,
+        serial TEXT DEFAULT '',
         note TEXT,
         created_at INTEGER,
         license_table TEXT DEFAULT 'androidtv-x86'
@@ -1166,6 +1173,7 @@ async function ensureDbSchema(env) {
   } catch (e) { }
 
   try { await env.DB.prepare("ALTER TABLE gift_keys ADD COLUMN extend INTEGER DEFAULT 7").run(); } catch (_) { }
+  try { await env.DB.prepare("ALTER TABLE gift_keys ADD COLUMN serial TEXT DEFAULT ''").run(); } catch (_) { }
   try { await env.DB.prepare("ALTER TABLE gift_keys ADD COLUMN license_table TEXT DEFAULT 'androidtv-x86'").run(); } catch (_) { }
   try { await env.DB.prepare("UPDATE gift_keys SET license_table = 'androidtv-x86' WHERE license_table IS NULL OR license_table = ''").run(); } catch (_) { }
 
@@ -1463,12 +1471,15 @@ async function syncGiftCodeToGitHub(env, licenseShortName) {
     const targetShortName = sanitizeLicenseName(licenseShortName) || "androidtv-x86";
 
     const { results } = await env.DB.prepare(
-      "SELECT gift_code, start_date, expiration_date, extend FROM gift_keys WHERE license_table = ? AND expiration_date >= ? ORDER BY created_at DESC"
+      "SELECT gift_code, start_date, expiration_date, extend, serial FROM gift_keys WHERE license_table = ? AND expiration_date >= ? ORDER BY created_at DESC"
     ).bind(targetShortName, today).all();
 
     const records = (results || []).map(r => {
       const extendVal = r.extend != null ? Number(r.extend) : 7;
-      const rawMeta = `${r.start_date}:${r.expiration_date}:${extendVal}`;
+      const cleanSerial = sanitizeCode(r.serial);
+      const rawMeta = cleanSerial
+        ? `${r.start_date}:${r.expiration_date}:${extendVal}:${cleanSerial}`
+        : `${r.start_date}:${r.expiration_date}:${extendVal}`;
       return {
         gift_code: r.gift_code,
         metadata: xorEncryptHex(rawMeta, xorKey)

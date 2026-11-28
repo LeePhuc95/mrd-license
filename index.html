@@ -2076,6 +2076,7 @@
                 </th>
                 <th class="col-stt">STT</th>
                 <th style="width: 180px;">GIFT CODE</th>
+                <th style="width: 140px;">SÊ-RI</th>
                 <th style="width: 120px;">NGÀY BẮT ĐẦU</th>
                 <th style="width: 120px;">NGÀY HẾT HẠN</th>
                 <th style="width: 110px;">GIA HẠN</th>
@@ -2086,7 +2087,7 @@
             </thead>
             <tbody id="giftTableBody">
               <tr>
-                <td colspan="9" style="text-align: center; color: var(--text-muted);">Đang tải dữ liệu Gift Code...</td>
+                <td colspan="10" style="text-align: center; color: var(--text-muted);">Đang tải dữ liệu Gift Code...</td>
               </tr>
             </tbody>
           </table>
@@ -2217,6 +2218,7 @@
               <tr>
                 <th style="width: 40px;">STT</th>
                 <th>GIFT CODE (*)</th>
+                <th>SÊ-RI</th>
                 <th>NGÀY BẮT ĐẦU (YYYY-MM-DD) (*)</th>
                 <th>NGÀY HẾT HẠN (YYYY-MM-DD) (*)</th>
                 <th style="width: 100px;">GIA HẠN (*)</th>
@@ -2378,6 +2380,11 @@
         <label>GIA HẠN (SỐ NGÀY) (*)</label>
         <input type="number" id="giftExtend" min="1" max="3650" value="7" placeholder="Số ngày kích hoạt (Mặc định: 7)"
           style="font-weight: bold;">
+      </div>
+      <div class="form-group">
+        <label>SÊ-RI</label>
+        <input type="text" id="giftSerial" placeholder="Để trống nếu dùng cho mọi thiết bị..."
+          style="text-transform: uppercase;" oninput="sanitizeCodeInput(this)">
       </div>
       <div class="form-group">
         <label>GHI CHÚ</label>
@@ -3538,7 +3545,7 @@
       const todayStr = new Date().toISOString().split("T")[0];
 
       if (pageItems.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--text-muted); padding: 24px;">Không tìm thấy Gift Code nào. Bấm nút "+ Tạo Gift Code" ở trên để thêm.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: var(--text-muted); padding: 24px;">Không tìm thấy Gift Code nào. Bấm nút "+ Tạo Gift Code" ở trên để thêm.</td></tr>';
       } else {
         tbody.innerHTML = pageItems.map(function (item, index) {
           const stt = start + index + 1;
@@ -3555,6 +3562,7 @@
             '</td>' +
             '<td class="col-stt"><b>' + stt + '</b></td>' +
             '<td><b><code>' + item.gift_code + '</code></b></td>' +
+            '<td>' + (item.serial ? '<code>' + item.serial + '</code>' : '-') + '</td>' +
             '<td><code>' + item.start_date + '</code></td>' +
             '<td><code>' + item.expiration_date + '</code></td>' +
             '<td><span class="badge badge-shard">' + extendVal + ' ngày</span></td>' +
@@ -3751,6 +3759,7 @@
         return '<tr data-id="' + item.id + '">' +
           '<td style="text-align: center; font-weight: bold;">' + stt + '</td>' +
           '<td><input type="text" class="bulk-cell-input bulk-gift-code" value="' + (item.gift_code || "") + '" style="font-family: monospace; font-weight: bold; text-transform: uppercase;" oninput="sanitizeCodeInput(this)"></td>' +
+          '<td><input type="text" class="bulk-cell-input bulk-gift-serial" value="' + (item.serial || "") + '" placeholder="Trống" style="font-family: monospace; text-transform: uppercase;" oninput="sanitizeCodeInput(this)"></td>' +
           '<td><input type="text" class="bulk-cell-input bulk-gift-start" value="' + (normalizeDateStr(item.start_date) || "") + '" placeholder="YYYY-MM-DD" maxlength="15" style="text-align: center; font-family: monospace;" onblur="this.value = normalizeDateStr(this.value)"></td>' +
           '<td><input type="text" class="bulk-cell-input bulk-gift-exp" value="' + (normalizeDateStr(item.expiration_date) || "") + '" placeholder="YYYY-MM-DD" maxlength="15" style="text-align: center; font-family: monospace;" onblur="this.value = normalizeDateStr(this.value)"></td>' +
           '<td><input type="number" min="1" max="3650" class="bulk-cell-input bulk-gift-extend" value="' + extendVal + '" style="text-align: center; font-weight: bold;"></td>' +
@@ -3775,6 +3784,7 @@
         const stt = idx + 1;
         const id = Number(row.getAttribute("data-id"));
         const gift_code = sanitizeCode(row.querySelector(".bulk-gift-code").value);
+        const serial = sanitizeCode(row.querySelector(".bulk-gift-serial").value);
         const start_date = normalizeDateStr(row.querySelector(".bulk-gift-start").value);
         const expiration_date = normalizeDateStr(row.querySelector(".bulk-gift-exp").value);
         const extend = parseInt(row.querySelector(".bulk-gift-extend").value, 10) || 7;
@@ -3792,7 +3802,7 @@
         }
         if (start_date > expiration_date) return showToast("Mục " + stt + ": Ngày bắt đầu không được lớn hơn ngày hết hạn!", "warn");
 
-        itemsToUpdate.push({ id: id, gift_code: gift_code, start_date: start_date, expiration_date: expiration_date, extend: extend, note: note });
+        itemsToUpdate.push({ id: id, gift_code: gift_code, serial: serial, start_date: start_date, expiration_date: expiration_date, extend: extend, note: note });
       }
 
       const saveBtn = document.getElementById("btnSaveBulkGifts");
@@ -4328,6 +4338,7 @@
       if (expPicker) expPicker.value = expStr;
 
       document.getElementById("giftExtend").value = 7;
+      document.getElementById("giftSerial").value = "";
       document.getElementById("giftNote").value = "";
       document.getElementById("giftModal").style.display = "flex";
     }
@@ -4347,6 +4358,7 @@
       const expPicker = document.getElementById("giftExpDatePicker");
       if (expPicker) expPicker.value = eDate;
       document.getElementById("giftExtend").value = item.extend != null ? item.extend : 7;
+      document.getElementById("giftSerial").value = item.serial || "";
       document.getElementById("giftNote").value = item.note || "";
       document.getElementById("giftModal").style.display = "flex";
     }
@@ -4375,6 +4387,7 @@
       let start_date = normalizeDateStr(rawStart) || normalizeDateStr(pickerStart);
       let expiration_date = normalizeDateStr(rawExp) || normalizeDateStr(pickerExp);
       const extend = parseInt(document.getElementById("giftExtend").value, 10) || 7;
+      const serial = sanitizeCode(document.getElementById("giftSerial").value);
       const note = document.getElementById("giftNote").value.trim();
 
       // Cập nhật lại UI ô nhập và picker để hiển thị định dạng chuẩn YYYY-MM-DD
@@ -4404,7 +4417,7 @@
         const action = id ? "update_gift_key" : "create_gift_key";
         const loadingMsg = id ? "Đang cập nhật Gift Code..." : "Đang tạo Gift Code & đồng bộ file JSON...";
         const res = await sendAdminAction(
-          { action, id: id ? Number(id) : undefined, gift_code, start_date, expiration_date, extend, note },
+          { action, id: id ? Number(id) : undefined, gift_code, start_date, expiration_date, extend, serial, note },
           loadingMsg
         );
         if (res && res.success) {
