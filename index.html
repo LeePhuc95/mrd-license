@@ -2238,10 +2238,10 @@
               <tr>
                 <th style="width: 40px;">STT</th>
                 <th>GIFT CODE (*)</th>
-                <th>SÊ-RI</th>
                 <th>NGÀY BẮT ĐẦU (YYYY-MM-DD) (*)</th>
                 <th>NGÀY HẾT HẠN (YYYY-MM-DD) (*)</th>
                 <th style="width: 100px;">GIA HẠN (*)</th>
+                <th>SÊ-RI</th>
                 <th class="col-note">GHI CHÚ</th>
               </tr>
             </thead>
@@ -3582,11 +3582,11 @@
             '</td>' +
             '<td class="col-stt"><b>' + stt + '</b></td>' +
             '<td><b><code>' + item.gift_code + '</code></b></td>' +
-            '<td>' + (item.serial ? '<code>' + item.serial + '</code>' : '-') + '</td>' +
             '<td><code>' + item.start_date + '</code></td>' +
             '<td><code>' + item.expiration_date + '</code></td>' +
             '<td><span class="badge badge-shard">' + extendVal + ' ngày</span></td>' +
             '<td>' + statusBadge + '</td>' +
+            '<td>' + (item.serial ? '<code>' + item.serial + '</code>' : '-') + '</td>' +
             '<td class="col-note">' + (item.note || "-") + '</td>' +
             '<td class="col-actions">' +
             '<button type="button" class="btn btn-blue" style="padding: 4px 8px; font-size: 11px; margin-right: 4px;" onclick="openEditGiftModal(' + item.id + ')">Sửa</button>' +
