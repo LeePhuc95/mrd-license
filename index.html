@@ -1663,10 +1663,12 @@
       transition: background 0.15s ease, color 0.15s ease;
       margin-bottom: 2px;
     }
+
     .table-dropdown-item:hover {
       background: rgba(255, 255, 255, 0.08);
       color: #38bdf8;
     }
+
     .table-dropdown-item.active {
       background: rgba(56, 189, 248, 0.18);
       color: #38bdf8;
@@ -1749,18 +1751,27 @@
     </div>
 
     <!-- DROPDOWN CHỌN BẢNG BẢN QUYỀN -->
-    <div class="custom-table-select-wrap" id="customTableSelectWrap" style="padding: 14px 16px 12px 16px; position: relative;">
+    <div class="custom-table-select-wrap" id="customTableSelectWrap"
+      style="padding: 14px 16px 12px 16px; position: relative;">
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
-        <span style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700; letter-spacing: 0.5px;">📦 Bảng bản quyền</span>
-        <span id="tableCountBadge" style="font-size: 10px; background: rgba(255,255,255,0.08); color: var(--text-muted); padding: 1px 6px; border-radius: 10px; font-weight: 600;">1 bảng</span>
+        <span
+          style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700; letter-spacing: 0.5px;">📦
+          Bảng bản quyền</span>
+        <span id="tableCountBadge"
+          style="font-size: 10px; background: rgba(255,255,255,0.08); color: var(--text-muted); padding: 1px 6px; border-radius: 10px; font-weight: 600;">1
+          bảng</span>
       </div>
 
-      <div id="customTableTrigger" onclick="toggleTableDropdown()" style="display: flex; align-items: center; justify-content: space-between; background: #1e1e24; border: 1px solid rgba(255,255,255,0.14); color: #64b5f6; padding: 8px 12px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; user-select: none; transition: border-color 0.2s, background 0.2s;">
-        <span id="currentTableSelectText" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">androidtv-x86</span>
-        <span id="customTableArrow" style="font-size: 10px; margin-left: 8px; transition: transform 0.2s; color: var(--text-muted);">▼</span>
+      <div id="customTableTrigger" onclick="toggleTableDropdown()"
+        style="display: flex; align-items: center; justify-content: space-between; background: #1e1e24; border: 1px solid rgba(255,255,255,0.14); color: #64b5f6; padding: 8px 12px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; user-select: none; transition: border-color 0.2s, background 0.2s;">
+        <span id="currentTableSelectText"
+          style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">androidtv-x86</span>
+        <span id="customTableArrow"
+          style="font-size: 10px; margin-left: 8px; transition: transform 0.2s; color: var(--text-muted);">▼</span>
       </div>
 
-      <div id="customTableDropdownMenu" style="display: none; position: absolute; top: calc(100% - 6px); left: 16px; right: 16px; background: #1c1c24; border: 1px solid rgba(255,255,255,0.18); border-radius: 8px; box-shadow: 0 12px 28px rgba(0,0,0,0.7); max-height: 220px; overflow-y: auto; z-index: 100; padding: 5px;">
+      <div id="customTableDropdownMenu"
+        style="display: none; position: absolute; top: calc(100% - 6px); left: 16px; right: 16px; background: #1c1c24; border: 1px solid rgba(255,255,255,0.18); border-radius: 8px; box-shadow: 0 12px 28px rgba(0,0,0,0.7); max-height: 220px; overflow-y: auto; z-index: 100; padding: 5px;">
       </div>
     </div>
 
@@ -1819,9 +1830,11 @@
   <div id="promptOverlay">
     <div class="confirm-card">
       <h4 id="promptTitle" style="color: #64b5f6;">Nhập thông tin</h4>
-      <p id="promptDesc" style="color: var(--text-muted); font-size: 13px; line-height: 1.5; margin-bottom: 14px;">Vui lòng nhập nội dung:</p>
+      <p id="promptDesc" style="color: var(--text-muted); font-size: 13px; line-height: 1.5; margin-bottom: 14px;">Vui
+        lòng nhập nội dung:</p>
       <div style="margin-bottom: 18px;">
-        <input type="text" id="promptInput" class="form-control" autocomplete="off" style="width: 100%; box-sizing: border-box; background: #1a1a24; border: 1px solid rgba(255,255,255,0.2); color: #fff; padding: 10px 12px; border-radius: 8px; font-size: 14px; outline: none;">
+        <input type="text" id="promptInput" class="form-control" autocomplete="off"
+          style="width: 100%; box-sizing: border-box; background: #1a1a24; border: 1px solid rgba(255,255,255,0.2); color: #fff; padding: 10px 12px; border-radius: 8px; font-size: 14px; outline: none;">
       </div>
       <div class="confirm-actions">
         <button type="button" class="btn btn-gray" id="btnCancelPrompt">Hủy</button>
@@ -2076,18 +2089,19 @@
                 </th>
                 <th class="col-stt">STT</th>
                 <th style="width: 180px;">GIFT CODE</th>
-                <th style="width: 140px;">SÊ-RI</th>
                 <th style="width: 120px;">NGÀY BẮT ĐẦU</th>
                 <th style="width: 120px;">NGÀY HẾT HẠN</th>
                 <th style="width: 110px;">GIA HẠN</th>
                 <th style="width: 110px;">TRẠNG THÁI KEY</th>
+                <th style="width: 140px;">SÊ-RI</th>
                 <th class="col-note">GHI CHÚ</th>
                 <th class="col-actions">HÀNH ĐỘNG</th>
               </tr>
             </thead>
             <tbody id="giftTableBody">
               <tr>
-                <td colspan="10" style="text-align: center; color: var(--text-muted);">Đang tải dữ liệu Gift Code...</td>
+                <td colspan="10" style="text-align: center; color: var(--text-muted);">Đang tải dữ liệu Gift Code...
+                </td>
               </tr>
             </tbody>
           </table>
@@ -2102,24 +2116,30 @@
     <div id="settingsTab" class="tab-content">
       <!-- CARD QUẢN LÝ BẢNG BẢN QUYỀN -->
       <div class="card" style="max-width: 650px; margin: 0 auto 20px auto;">
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">
+        <div
+          style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">
           <h3 style="margin: 0; font-size: 16px; font-weight: 700;">📦 Quản lý Bảng Bản Quyền</h3>
-          <span id="currentTableBadge" class="badge" style="background: rgba(33, 150, 243, 0.2); color: #64b5f6; font-size: 13px; padding: 4px 10px; border-radius: 6px; font-weight: 700;">androidtv-x86</span>
+          <span id="currentTableBadge" class="badge"
+            style="background: rgba(33, 150, 243, 0.2); color: #64b5f6; font-size: 13px; padding: 4px 10px; border-radius: 6px; font-weight: 700;">androidtv-x86</span>
         </div>
 
         <div style="display: flex; flex-direction: column; gap: 14px;">
           <div style="font-size: 13px; color: var(--text-muted); line-height: 1.5;">
-            Quản trị các bảng bản quyền độc lập. Tên bảng trong D1 có dạng <code>&lt;tên&gt;_license</code>. Mọi dữ liệu JSON được tự động lưu vào thư mục <code>/json/&lt;tên_bảng&gt;/</code> trên GitHub Repo.
+            Quản trị các bảng bản quyền độc lập. Tên bảng trong D1 có dạng <code>&lt;tên&gt;_license</code>. Mọi dữ liệu
+            JSON được tự động lưu vào thư mục <code>/json/&lt;tên_bảng&gt;/</code> trên GitHub Repo.
           </div>
 
           <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px;">
-            <button type="button" class="btn btn-green" onclick="handleCreateLicenseTable()" style="padding: 8px 16px; font-size: 13px;">
+            <button type="button" class="btn btn-green" onclick="handleCreateLicenseTable()"
+              style="padding: 8px 16px; font-size: 13px;">
               ➕ Tạo bảng bản quyền mới
             </button>
-            <button type="button" class="btn btn-blue" onclick="handleRenameLicenseTable()" style="padding: 8px 16px; font-size: 13px;">
+            <button type="button" class="btn btn-blue" onclick="handleRenameLicenseTable()"
+              style="padding: 8px 16px; font-size: 13px;">
               ✏️ Đổi tên bảng hiện tại
             </button>
-            <button type="button" class="btn btn-red" onclick="handleDeleteLicenseTable()" style="padding: 8px 16px; font-size: 13px;">
+            <button type="button" class="btn btn-red" onclick="handleDeleteLicenseTable()"
+              style="padding: 8px 16px; font-size: 13px;">
               🗑️ Xóa bảng hiện tại
             </button>
           </div>
@@ -2140,7 +2160,7 @@
                 bật</span>
             </div>
             <div class="setting-desc">
-              Tự động gửi email thông báo kích hoạt sau 60 giây sau khi tạo Kích hoạt mới.
+              Tự động gửi email thông báo kích hoạt sau 10 giây sau khi tạo Kích hoạt mới.
             </div>
           </div>
           <label class="toggle-switch">
@@ -3380,16 +3400,16 @@
                 } else {
                   let isCountingDown = false;
                   if (systemData.auto_send_email && isSerialOk && isRomOk && item.created_at) {
-                    const targetTime = Number(item.created_at) + 60000;
+                    const targetTime = Number(item.created_at) + 10000;
                     const remainingSec = Math.ceil((targetTime - Date.now()) / 1000);
-                    if (remainingSec > 0 && remainingSec <= 65) {
+                    if (remainingSec > 0 && remainingSec <= 15) {
                       isCountingDown = true;
                       mailBadgeHtml = '<span class="badge badge-COUNTDOWN" data-id="' + item.id + '" data-target-time="' + targetTime + '">' + remainingSec + 's</span>';
                     }
                   }
 
                   if (!isCountingDown) {
-                    // Chưa gửi tự động (đã quá hạn 60s, tạo trước khi bật tự động, hoặc tắt tự động) -> hiển thị WAIT để gửi thủ công
+                    // Chưa gửi tự động (đã quá hạn 10s, tạo trước khi bật tự động, hoặc tắt tự động) -> hiển thị WAIT để gửi thủ công
                     mailBadgeHtml = '<span class="badge badge-WAIT" title="Chưa gửi email - Bấm vào dòng để gửi thủ công">WAIT</span>';
                   }
                 }
@@ -4258,7 +4278,19 @@
         // Chạy ngầm hoàn toàn (silent): không hiện popup overlay làm gián đoạn người dùng
         const res = await sendAdminAction({ action: "resend_mail", id: id, is_auto: true }, false);
         if (res && res.success) {
-          const finalStatus = (res.gmail_notify && res.gmail_notify !== "SENDING") ? (res.gmail_notify === "SENT" ? "OK" : res.gmail_notify) : "OK";
+          if (res.gmail_notify === "SENDING") {
+            const found = (systemData.licenses || []).find(l => l.id === id);
+            if (found) found.gmail_notify = "SENDING";
+            if (badgeEl) {
+              badgeEl.className = "badge badge-off";
+              badgeEl.innerText = "Đang gửi...";
+            }
+            setTimeout(function () {
+              loadAllData();
+            }, 10000);
+            return;
+          }
+          const finalStatus = res.gmail_notify ? (res.gmail_notify === "SENT" ? "OK" : res.gmail_notify) : "OK";
           const found = (systemData.licenses || []).find(l => l.id === id);
           if (found) found.gmail_notify = finalStatus;
           if (badgeEl) {
@@ -4297,7 +4329,7 @@
       try {
         const res = await sendAdminAction({ action: "update_setting_auto_email", enabled: enabled }, "Đang lưu cài đặt...");
         if (res && res.success !== false) {
-          showToast(enabled ? "Đã bật tự động gửi email sau 60s!" : "Đã tắt tự động gửi email!", "success");
+          showToast(enabled ? "Đã bật tự động gửi email sau 10s!" : "Đã tắt tự động gửi email!", "success");
           renderLicenseTable();
         } else {
           throw new Error((res && res.error) || "Không thể lưu cài đặt");

@@ -303,7 +303,7 @@ export default {
           const gasUrl = env.GAS_WEBAPP_URL;
           const secret = env.INTERNAL_SECRET;
 
-          // KIỂM TRA ĐIỀU KIỆN TỰ ĐỘNG GỬI EMAIL SAU 60 GIÂY
+          // KIỂM TRA ĐIỀU KIỆN TỰ ĐỘNG GỬI EMAIL SAU 10 GIÂY
           if (newId) {
             const autoEmailSetting = await env.DB.prepare("SELECT req_count FROM system_stats WHERE date_key = 'SETTINGS' AND service_type = 'AUTO_SEND_EMAIL'").first();
             const isAutoEmailEnabled = autoEmailSetting ? autoEmailSetting.req_count === 1 : false;
@@ -316,7 +316,7 @@ export default {
             if (isAutoEmailEnabled && hasEmail && isSerialNotEmpty && isRomNotEmpty && isKeyOk) {
               ctx.waitUntil((async () => {
                 try {
-                  await new Promise(resolve => setTimeout(resolve, 60000));
+                  await new Promise(resolve => setTimeout(resolve, 10000));
 
                   const lockRes = await env.DB.prepare(
                     `UPDATE "${actualTable}" SET gmail_notify = 'SENDING' WHERE id = ? AND gmail_notify = 'NONE' AND key_status = 'OK'`
@@ -352,7 +352,7 @@ export default {
                   }
                   await bumpDbVersion(env);
                 } catch (err) {
-                  console.error("Lỗi gửi email tự động 60s:", err);
+                  console.error("Lỗi gửi email tự động 10s:", err);
                   try {
                     await env.DB.prepare(`UPDATE "${actualTable}" SET gmail_notify = 'ERROR' WHERE id = ?`).bind(newId).run();
                     await bumpDbVersion(env);
@@ -476,6 +476,7 @@ export default {
             updateStmts.push(env.DB.prepare(`UPDATE "${actualTable}" SET prefix = ? WHERE id = ?`).bind(p, row.id));
 
             if (!prefixMap.has(p)) prefixMap.set(p, []);
+            if (String(row.key_status || '').toUpperCase() === 'DEL') continue;
             const raw = `${row.serial}:${row.rom_version}:${row.key_status}`;
             prefixMap.get(p).push(xorEncryptHex(raw, xorKey));
           }
@@ -1429,7 +1430,7 @@ async function syncShardsBlockToGitHub(env, prefixes, customMessage, licenseShor
       const chunkPrefixes = list.slice(i, i + CHUNK_SIZE);
       const placeholders = chunkPrefixes.map(() => "?").join(",");
       const { results } = await env.DB.prepare(
-        `SELECT prefix, serial, rom_version, key_status FROM "${actualTable}" WHERE prefix IN (${placeholders})`
+        `SELECT prefix, serial, rom_version, key_status FROM "${actualTable}" WHERE prefix IN (${placeholders}) AND (key_status IS NULL OR UPPER(key_status) != 'DEL')`
       ).bind(...chunkPrefixes).all();
 
       for (const row of (results || [])) {
